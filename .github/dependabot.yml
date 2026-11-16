@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Mantiene al día (y fijadas por SHA) las acciones de los workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"
+  # El ecosistema "cargo" se agrega en la tarea M0.1.2 (cuando exista Cargo.toml).

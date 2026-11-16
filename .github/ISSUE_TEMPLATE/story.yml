@@ -1,0 +1,30 @@
+name: Historia
+description: Valor entregable que se divide en varias tareas chicas
+labels: ["type:story"]
+body:
+  - type: input
+    id: epic
+    attributes:
+      label: Épica padre
+      description: Issue de la épica (#N)
+    validations:
+      required: true
+  - type: textarea
+    id: story
+    attributes:
+      label: Historia
+      description: "Como <rol>, quiero <capacidad>, para <beneficio>"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Criterios de aceptación de la historia
+      placeholder: "- [ ] …"
+    validations:
+      required: true
+  - type: textarea
+    id: refs
+    attributes:
+      label: Referencias
+      description: Docs del GDD relacionados
