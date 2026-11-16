@@ -1,0 +1,39 @@
+name: Tarea
+description: Trabajo chico (≤ ~1 día) con requisitos y criterios de aceptación verificables
+labels: ["type:task"]
+body:
+  - type: input
+    id: story
+    attributes:
+      label: Historia padre
+      description: Issue de la historia a la que pertenece (#N)
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto
+      description: Por qué existe esta tarea y qué parte del GDD implementa
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requisitos
+      description: Qué debe hacerse (lista corta, concreta, con números de los docs cuando existan)
+      placeholder: "- …"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Criterios de aceptación
+      description: Condiciones verificables. Preferí formato Dado / Cuando / Entonces o checklist.
+      placeholder: "- [ ] …"
+    validations:
+      required: true
+  - type: textarea
+    id: refs
+    attributes:
+      label: Referencias y dependencias
+      description: Docs del GDD (p. ej. 22 §1.3) y tareas que deben estar hechas antes

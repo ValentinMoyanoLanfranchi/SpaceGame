@@ -1,0 +1,21 @@
+name: Error
+description: Algo no funciona como dice el diseño o las pruebas
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Qué pasó
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Cómo reproducirlo
+      description: Idealmente semilla + lista de comandos (la simulación es determinista)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Qué se esperaba (y en qué doc está)

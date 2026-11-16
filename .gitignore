@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Godot 4
+godot/.godot/
+godot/.import/
+godot/export_presets.cfg
+*.translation
+godot/bin/
+
+# Salidas locales (telemetría, partidas de prueba, benchmarks)
+/out/
+*.sav
+*.sav.zst
+criterion/
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secretos (nunca versionar)
+.env
+.env.*
+*.pem
+*.key
