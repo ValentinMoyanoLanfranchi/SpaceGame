@@ -1,0 +1,11 @@
+[
+  { "id": "body.a", "kind": "moon", "radius_km": 1, "detect_difficulty": 0 },
+  { "id": "body.a", "kind": "moon", "radius_km": 1, "detect_difficulty": 0 },
+  { "id": "Body.Mayus", "kind": "moon", "radius_km": 1, "detect_difficulty": 0 },
+  { "id": "sinpunto", "kind": "moon", "radius_km": 1, "detect_difficulty": 0 },
+  { "id": "body.huerfano", "kind": "moon", "parent": "body.fantasma", "radius_km": 1, "detect_difficulty": 0 },
+  { "id": "body.mal_tipo", "kind": "moon", "parent": "good.hierro", "radius_km": 1, "detect_difficulty": 0,
+    "deposits": [ { "good": "good.inexistente", "reserve_mt": 1, "access": 0.1 } ] },
+  { "id": "body.x", "kind": "moon", "parent": "body.y", "radius_km": 1, "detect_difficulty": 0 },
+  { "id": "body.y", "kind": "moon", "parent": "body.x", "radius_km": 1, "detect_difficulty": 0 }
+]

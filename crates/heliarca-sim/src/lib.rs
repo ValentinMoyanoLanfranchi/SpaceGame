@@ -100,6 +100,7 @@ pub mod data;
 mod events;
 pub mod ids;
 mod loc;
+mod registry;
 #[allow(dead_code)]
 mod rng;
 mod scenario;
