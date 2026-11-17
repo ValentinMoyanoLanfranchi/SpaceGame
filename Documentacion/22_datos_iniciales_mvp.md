@@ -5,6 +5,7 @@
 ## 0. Convenciones
 
 - **Tiempo:** año de 365 días; calendario simple; fecha de inicio configurable (por defecto "Año 1, día 1").
+- **Cadencias del planificador:** semana = 7 días, mes = 30 días, año = 365 días (el mes no encaja en el año: 12 meses = 360 días). Las fronteras se cuentan desde el inicio de la partida, no desde la fecha de inicio del calendario: en 365 días corren 365 veces un sistema diario, 52 uno semanal, 12 uno mensual y 1 uno anual. Un incremento largo ejecuta un sistema una vez por cada frontera que cruza (D30 = 30 corridas diarias y 1 mensual). Orden de ejecución estable: instante, prioridad fija y luego id.
 - **Dinero:** créditos (cr). "M cr" = millones. Los precios por tonelada son los de 18.
 - **Masa:** toneladas (t); reservas en megatoneladas (Mt).
 - **Distancias:** UA en órbitas heliocéntricas; km en lunas.
