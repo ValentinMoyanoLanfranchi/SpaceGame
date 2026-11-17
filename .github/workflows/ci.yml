@@ -45,6 +45,26 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/ci/check-cargo-config.sh
 
+      - name: Agregador validate y seguridad de workflows
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/check-workflow-aggregator.sh
+
+      # actionlint oficial (sin acciones de terceros): versión fijada y binario verificado
+      # contra un SHA-256 (de checksums.txt del release v1.7.12) antes de ejecutarlo.
+      - name: actionlint
+        if: runner.os == 'Linux'
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archivo="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          dir="$(mktemp -d)"
+          curl -fsSL --retry 3 -o "$dir/$archivo" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archivo"
+          echo "$ACTIONLINT_SHA256  $dir/$archivo" | sha256sum --check --strict -
+          tar -xzf "$dir/$archivo" -C "$dir" actionlint
+          "$dir/actionlint" -color .github/workflows/*.y*ml
+
       - name: Detectar workspace de Rust
         id: rust
         run: |
