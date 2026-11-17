@@ -1,5 +1,7 @@
 [
   { "id": "body.tierra", "kind": "planet", "radius_km": 6371, "detect_difficulty": 0 },
+  { "id": "jp.alfa", "kind": "jump_point", "parent": "body.tierra", "radius_km": 0, "detect_difficulty": 9 },
+  { "id": "body.nave", "kind": "moon", "parent": "jp.alfa", "radius_km": 1, "detect_difficulty": 0 },
   {
     "id": "body.luna",
     "kind": "moon",

@@ -23,7 +23,7 @@
 //!
 //! | Archivo | Prefijo | Id tipado |
 //! |---|---|---|
-//! | `bodies.json` | `body` | [`BodyId`] |
+//! | `bodies.json` | `body` o `jp` (punto de salto, ver abajo) | [`BodyId`] |
 //! | `goods.json` | `good` | [`GoodId`] |
 //! | `recipes.json` | `recipe` | [`RecipeId`] |
 //! | `facilities.json` | `facility` | [`FacilityId`] |
@@ -37,6 +37,15 @@
 //! singular y en inglés como los demás) y se cambian en un solo lugar si el doc fija otros.
 //! `scenario_earth.json` (objeto libre) y `loc/es.json` (claves de texto, #35) no tienen ids de
 //! entrada y no se validan aquí.
+//!
+//! # Excepción: el punto de salto (`jp.*`)
+//!
+//! Doc 22 §11 dice que `bodies.json` trae «21 cuerpos + punto de salto + yacimientos» y §1.2 nombra
+//! al punto de salto `jp.alfa`. Por eso `bodies.json` acepta los prefijos `body` **y** `jp`
+//! ([`BodyRegistry`]): ambos son cuerpos, comparten la secuencia de [`BodyId`] y el texto conserva
+//! su prefijo (`jp.alfa` <-> id <-> `jp.alfa`). `body.alfa` y `jp.alfa` son ids distintos (no son
+//! duplicados). Un `jp.*` en cualquier otro archivo es un error de prefijo, y un nombre inválido
+//! bajo `jp` es `InvalidId` como siempre.
 //!
 //! # Asignación de ids
 //!
@@ -52,7 +61,7 @@
 //!
 //! | Origen | Campo | Debe ser |
 //! |---|---|---|
-//! | `bodies.json` | `parent` | un `body.*` existente (y sin ciclos) |
+//! | `bodies.json` | `parent` | un `body.*` o `jp.*` existente (y sin ciclos) |
 //! | `bodies.json` | `deposits[].good` | un `good.*` existente |
 //! | `techs.json` | `prereqs[]` (§6.1) | un `tech.*` existente |
 //! | `techs.json` | `unlocks.designs[]` (§6.1) | un `design.*` existente |
@@ -103,7 +112,152 @@ use thiserror::Error;
 
 use crate::data::{DATA_FILES, DataLoadErrors, DataLoader, Entry, GameData};
 use crate::define_id;
-use crate::ids::{BodyId, DesignId, EntityId, GoodId, IdRegistry, IdTextError, TechId, parse_text};
+use crate::ids::{
+    BodyId, DesignId, EntityId, GoodId, IdRegistry, IdTextError, TechId, parse_text, validate_name,
+};
+
+/// Prefijo de los puntos de salto, que viven en `bodies.json` (doc 22 §1.2 y §11).
+pub const JUMP_POINT_PREFIX: &str = "jp";
+
+/// Texto esperado en los errores de referencia a un cuerpo (admite dos prefijos).
+const BODY_REF_LABEL: &str = "body|jp";
+
+/// Tabla texto <-> [`BodyId`] de `bodies.json`.
+///
+/// Es una excepción derivada del doc 22: §11 dice que `bodies.json` trae «21 cuerpos + punto de
+/// salto + yacimientos» y §1.2 llama al punto de salto `jp.alfa`. Por eso aquí se aceptan **dos**
+/// prefijos, `body.*` y `jp.*`, y ambos son cuerpos: reciben [`BodyId`] de la misma secuencia
+/// (orden de aparición, sin importar el prefijo), pueden ser `parent` de otro cuerpo y participan
+/// en la detección de ciclos. Se guarda el texto completo (`jp.alfa`), así que el texto vuelve
+/// con su prefijo original; `body.alfa` y `jp.alfa` son ids distintos (no son duplicados).
+/// Fuera de `bodies.json` el prefijo `jp` sigue siendo inválido.
+#[derive(Debug, Clone, Default)]
+pub struct BodyRegistry {
+    texts: Vec<String>,
+    by_text: BTreeMap<String, BodyId>,
+}
+
+impl BodyRegistry {
+    /// Cantidad de cuerpos registrados.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.texts.len()
+    }
+
+    /// Indica si no hay cuerpos registrados.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.texts.is_empty()
+    }
+
+    /// Id de un texto registrado (`body.luna`, `jp.alfa`).
+    #[must_use]
+    pub fn get(&self, text: &str) -> Option<BodyId> {
+        self.by_text.get(text).copied()
+    }
+
+    /// Texto estable de un id, con su prefijo original.
+    #[must_use]
+    pub fn to_text(&self, id: BodyId) -> Option<String> {
+        let index = usize::try_from(id.raw()).ok()?;
+        self.texts.get(index).cloned()
+    }
+
+    /// Resuelve un texto `body.*` o `jp.*` a su id.
+    ///
+    /// # Errors
+    ///
+    /// Texto mal formado, prefijo que no es `body` ni `jp`, o [`IdTextError::Unknown`].
+    pub fn from_text(&self, text: &str) -> Result<BodyId, IdTextError> {
+        validate_body_text(text)?;
+        self.get(text).ok_or(IdTextError::Unknown)
+    }
+
+    /// Recorre `(id, texto)` en orden de registro.
+    pub fn iter(&self) -> impl Iterator<Item = (BodyId, &str)> + '_ {
+        self.texts
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| Some((BodyId::from_raw(u32::try_from(i).ok()?), t.as_str())))
+    }
+
+    fn register(&mut self, text: &str) -> Result<BodyId, IdTextError> {
+        validate_body_text(text)?;
+        if self.by_text.contains_key(text) {
+            return Err(IdTextError::Duplicate);
+        }
+        let raw = u32::try_from(self.texts.len()).map_err(|_| IdTextError::RegistryFull)?;
+        let id = BodyId::from_raw(raw);
+        self.texts.push(text.to_owned());
+        self.by_text.insert(text.to_owned(), id);
+        Ok(id)
+    }
+}
+
+/// Valida `body.<nombre>` o `jp.<nombre>` con las reglas de [`crate::ids`].
+fn validate_body_text(text: &str) -> Result<(), IdTextError> {
+    match text.split_once('.') {
+        Some((JUMP_POINT_PREFIX, name)) => validate_name(name),
+        _ => parse_text::<BodyId>(text).map(|_| ()),
+    }
+}
+
+fn register_bodies<'a>(
+    file: &'static str,
+    ids: impl Iterator<Item = &'a str>,
+    errors: &mut Vec<RegistryError>,
+) -> BodyRegistry {
+    let mut registry = BodyRegistry::default();
+    let mut first_seen: BTreeMap<&str, usize> = BTreeMap::new();
+    for (position, id) in ids.enumerate() {
+        match registry.register(id) {
+            Ok(_) => {
+                first_seen.insert(id, position);
+            }
+            Err(IdTextError::Duplicate) => errors.push(RegistryError::DuplicateId {
+                file,
+                id: id.to_owned(),
+                first: first_seen.get(id).copied().unwrap_or_default(),
+                second: position,
+            }),
+            Err(reason) => errors.push(RegistryError::InvalidId {
+                file,
+                position,
+                id: id.to_owned(),
+                reason,
+            }),
+        }
+    }
+    registry
+}
+
+/// Destino de una referencia: algo que resuelve textos de ids.
+trait RefTarget {
+    /// Prefijo(s) esperado(s), para los mensajes.
+    fn expected(&self) -> &'static str;
+    /// Resuelve el texto; ver [`IdRegistry::from_text`].
+    fn lookup(&self, text: &str) -> Result<(), IdTextError>;
+}
+
+impl<I: EntityId> RefTarget for IdRegistry<I> {
+    fn expected(&self) -> &'static str {
+        I::PREFIX
+    }
+
+    fn lookup(&self, text: &str) -> Result<(), IdTextError> {
+        self.from_text(text).map(|_| ())
+    }
+}
+
+impl RefTarget for BodyRegistry {
+    fn expected(&self) -> &'static str {
+        BODY_REF_LABEL
+    }
+
+    fn lookup(&self, text: &str) -> Result<(), IdTextError> {
+        self.from_text(text).map(|_| ())
+    }
+}
 
 define_id! {
     /// Id de una receta. Texto: `recipe.<nombre>`.
@@ -255,7 +409,7 @@ impl std::error::Error for RegistryErrors {}
 /// Tablas texto <-> id de todos los datos, ya validados.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
-    bodies: IdRegistry<BodyId>,
+    bodies: BodyRegistry,
     goods: IdRegistry<GoodId>,
     recipes: IdRegistry<RecipeId>,
     facilities: IdRegistry<FacilityId>,
@@ -287,7 +441,7 @@ impl Registry {
         ] = DATA_FILES;
         let mut errors = Vec::new();
         let registry = Self {
-            bodies: register_all(
+            bodies: register_bodies(
                 f_bodies,
                 data.bodies.iter().map(|b| b.id.as_str()),
                 &mut errors,
@@ -312,7 +466,7 @@ impl Registry {
 
     /// Ids de `bodies.json`.
     #[must_use]
-    pub fn bodies(&self) -> &IdRegistry<BodyId> {
+    pub fn bodies(&self) -> &BodyRegistry {
         &self.bodies
     }
 
@@ -618,8 +772,8 @@ fn register_all<'a, I: EntityId>(
 }
 
 /// Verifica que `value` sea un id bien formado, del tipo de `target`, y que exista.
-fn check_ref<I: EntityId>(
-    target: &IdRegistry<I>,
+fn check_ref(
+    target: &impl RefTarget,
     file: &'static str,
     entry: &str,
     field: &str,
@@ -627,14 +781,14 @@ fn check_ref<I: EntityId>(
     errors: &mut Vec<RegistryError>,
 ) {
     let (entry, field, value) = (entry.to_owned(), field.to_owned(), value.to_owned());
-    match target.from_text(&value) {
-        Ok(_) => {}
+    match target.lookup(&value) {
+        Ok(()) => {}
         Err(IdTextError::Unknown) => errors.push(RegistryError::UnknownReference {
             file,
             entry,
             field,
             value,
-            expected: I::PREFIX,
+            expected: target.expected(),
         }),
         Err(IdTextError::WrongPrefix { found, .. }) => {
             errors.push(RegistryError::WrongTypeReference {
@@ -643,7 +797,7 @@ fn check_ref<I: EntityId>(
                 field,
                 value,
                 found,
-                expected: I::PREFIX,
+                expected: target.expected(),
             });
         }
         Err(reason) => errors.push(RegistryError::InvalidReference {
@@ -657,8 +811,8 @@ fn check_ref<I: EntityId>(
 }
 
 /// Verifica un campo que debe ser una lista de ids del tipo de `target`.
-fn check_ref_list<I: EntityId>(
-    target: &IdRegistry<I>,
+fn check_ref_list(
+    target: &impl RefTarget,
     file: &'static str,
     entry: &str,
     field: &str,
@@ -811,12 +965,12 @@ mod tests {
         ));
         assert!(matches!(
             &errors[2],
-            RegistryError::UnknownReference { entry, field, value, expected: "body", .. }
+            RegistryError::UnknownReference { entry, field, value, expected: "body|jp", .. }
                 if entry == "body.c" && field == "parent" && value == "body.fantasma"
         ));
         assert_eq!(
             errors[2].to_string(),
-            "bodies.json: body.c: parent: «body.fantasma» no existe (se esperaba un «body.*» definido)"
+            "bodies.json: body.c: parent: «body.fantasma» no existe (se esperaba un «body|jp.*» definido)"
         );
     }
 
@@ -893,7 +1047,7 @@ mod tests {
         assert_eq!(errors.len(), 4, "{errors:?}");
         assert!(matches!(
             &errors[0],
-            RegistryError::WrongTypeReference { field, found, expected: "body", .. }
+            RegistryError::WrongTypeReference { field, found, expected: "body|jp", .. }
                 if field == "parent" && found == "good"
         ));
         assert!(matches!(
@@ -1063,6 +1217,116 @@ mod tests {
                 "bodies.json",
                 "bodies.json",
                 "techs.json"
+            ]
+        );
+    }
+
+    #[test]
+    fn el_punto_de_salto_es_un_cuerpo_con_prefijo_jp() {
+        let data = GameData {
+            bodies: vec![
+                body("body.sol", None, &[]),
+                body("jp.alfa", Some("body.sol"), &["good.hierro"]),
+                body("body.nave", Some("jp.alfa"), &[]),
+                body("body.alfa", None, &[]),
+            ],
+            goods: plain(&["good.hierro"]),
+            ..GameData::default()
+        };
+        let reg = data.build_registry().unwrap();
+        let jp = reg.bodies().from_text("jp.alfa").unwrap();
+        assert_eq!(jp.raw(), 1);
+        assert_eq!(reg.bodies().to_text(jp).as_deref(), Some("jp.alfa"));
+        // `body.alfa` y `jp.alfa` son ids distintos, no duplicados.
+        let alfa = reg.bodies().from_text("body.alfa").unwrap();
+        assert_ne!(alfa, jp);
+        assert_eq!(reg.bodies().to_text(alfa).as_deref(), Some("body.alfa"));
+        let texts: Vec<_> = reg.bodies().iter().map(|(_, t)| t).collect();
+        assert_eq!(texts, ["body.sol", "jp.alfa", "body.nave", "body.alfa"]);
+    }
+
+    #[test]
+    fn jp_en_otro_archivo_es_error_de_prefijo() {
+        let data = GameData {
+            goods: plain(&["jp.alfa"]),
+            techs: vec![entry("tech.t", json!({ "prereqs": ["jp.alfa"] }))],
+            ..GameData::default()
+        };
+        let errors = errors_of(&data);
+        assert!(matches!(
+            &errors[0],
+            RegistryError::InvalidId {
+                file: "goods.json",
+                reason: IdTextError::WrongPrefix {
+                    expected: "good",
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(
+            matches!(&errors[1], RegistryError::WrongTypeReference { found, .. } if found == "jp")
+        );
+    }
+
+    #[test]
+    fn jp_duplicado_y_jp_invalido_son_errores_de_id() {
+        let data = GameData {
+            bodies: vec![
+                body("jp.alfa", None, &[]),
+                body("jp.alfa", None, &[]),
+                body("jp.Alfa", None, &[]),
+                body("jp.", None, &[]),
+                body("jp", None, &[]),
+            ],
+            ..GameData::default()
+        };
+        let errors = errors_of(&data);
+        assert!(
+            matches!(&errors[0], RegistryError::DuplicateId { id, first: 0, second: 1, .. } if id == "jp.alfa")
+        );
+        assert!(matches!(
+            &errors[1],
+            RegistryError::InvalidId {
+                reason: IdTextError::InvalidName,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &errors[2],
+            RegistryError::InvalidId {
+                reason: IdTextError::EmptyName,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &errors[3],
+            RegistryError::InvalidId {
+                reason: IdTextError::MissingSeparator,
+                ..
+            }
+        ));
+        assert_eq!(errors.len(), 4);
+    }
+
+    #[test]
+    fn parent_a_un_jp_inexistente_o_de_tipo_equivocado_y_ciclo_por_un_jp() {
+        let data = GameData {
+            bodies: vec![
+                body("body.a", Some("jp.nada"), &[]),
+                body("body.b", Some("tech.x"), &[]),
+                body("jp.p", Some("body.q"), &[]),
+                body("body.q", Some("jp.p"), &[]),
+            ],
+            ..GameData::default()
+        };
+        let texts: Vec<_> = errors_of(&data).iter().map(ToString::to_string).collect();
+        assert_eq!(
+            texts,
+            [
+                "bodies.json: body.a: parent: «jp.nada» no existe (se esperaba un «body|jp.*» definido)",
+                "bodies.json: body.b: parent: «tech.x» es de tipo «tech» y se esperaba «body|jp»",
+                "bodies.json: ciclo en «parent»: jp.p -> body.q -> jp.p",
             ]
         );
     }

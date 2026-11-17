@@ -68,7 +68,7 @@ fn el_ejemplo_del_doc_22_valida_y_resuelve_ids() {
     let reg = &validated.registry;
     let luna = reg.bodies().from_text("body.luna").expect("luna");
     assert_eq!(reg.bodies().to_text(luna).as_deref(), Some("body.luna"));
-    assert_eq!(heliarca_sim::ids::EntityId::raw(luna), 1);
+    assert_eq!(heliarca_sim::ids::EntityId::raw(luna), 3);
     // `load_dir` sigue andando igual y el registro se puede reconstruir.
     let data = DataLoader::load_dir(&sb.0).expect("carga");
     assert!(Registry::build(&data).is_ok());
@@ -91,10 +91,11 @@ fn se_reportan_todos_los_errores_de_varios_archivos_en_orden_estable() {
             "bodies.json: [3]: id «sinpunto» inválido: falta el separador «.» (formato prefijo.nombre)",
             "goods.json: id «good.hierro» duplicado (posiciones [0] y [1])",
             "goods.json: [2]: id «good.Hielo» inválido: nombre inválido: sólo a-z, 0-9 y «_», y debe empezar con letra o dígito",
+            "goods.json: [3]: id «jp.alfa» inválido: prefijo «jp» incorrecto, se esperaba «good»",
             "techs.json: id «tech.pro_0_1» duplicado (posiciones [0] y [2])",
             // referencias
-            "bodies.json: body.huerfano: parent: «body.fantasma» no existe (se esperaba un «body.*» definido)",
-            "bodies.json: body.mal_tipo: parent: «good.hierro» es de tipo «good» y se esperaba «body»",
+            "bodies.json: body.huerfano: parent: «body.fantasma» no existe (se esperaba un «body|jp.*» definido)",
+            "bodies.json: body.mal_tipo: parent: «good.hierro» es de tipo «good» y se esperaba «body|jp»",
             "bodies.json: body.mal_tipo: deposits[0].good: «good.inexistente» no existe (se esperaba un «good.*» definido)",
             "techs.json: tech.pro_1_1: prereqs[1]: «tech.ene_0_1» no existe (se esperaba un «tech.*» definido)",
             "techs.json: tech.pro_1_1: unlocks.designs[0]: «design.snd_1» no existe (se esperaba un «design.*» definido)",
@@ -141,8 +142,20 @@ fn el_display_del_error_de_etapa_lista_los_errores() {
     let err = DataLoader::load_validated(&sb.0).expect_err("debe fallar");
     let text = err.to_string();
     assert!(
-        text.starts_with("2 error(es) de ids y referencias"),
+        text.starts_with("3 error(es) de ids y referencias"),
         "{text}"
     );
-    assert_eq!(text.lines().count(), 3);
+    assert_eq!(text.lines().count(), 4);
+}
+
+#[test]
+fn el_punto_de_salto_jp_alfa_valida_y_vuelve_con_su_prefijo() {
+    let sb = Sandbox::new("jp");
+    sb.put("bodies.json", "registry_bodies_valid.json")
+        .put("goods.json", "registry_goods_valid.json");
+    let validated = DataLoader::load_validated(&sb.0).expect("debe validar");
+    let bodies = validated.registry.bodies();
+    let jp = bodies.from_text("jp.alfa").expect("jp.alfa");
+    assert_eq!(bodies.to_text(jp).as_deref(), Some("jp.alfa"));
+    assert!(bodies.from_text("body.nave").is_ok());
 }
