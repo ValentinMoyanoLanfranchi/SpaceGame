@@ -328,9 +328,8 @@ impl Sim {
         &mut self.rng
     }
 
-    /// Registro de eventos (escritura): para los comandos al aplicarse. Hoy sólo lo usan los
-    /// tests; cuando haya comandos reales (M0.3+) se quita el `cfg(test)`.
-    #[cfg(test)]
+    /// Registro de eventos (escritura): para los comandos al aplicarse (`debug.mark` es el primero;
+    /// los del juego se suman en M0.3+).
     pub(crate) fn events_mut(&mut self) -> &mut EventLog {
         &mut self.events
     }

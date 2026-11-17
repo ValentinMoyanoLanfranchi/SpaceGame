@@ -24,9 +24,13 @@ use std::path::Path;
 
 use clap::ValueEnum;
 use heliarca_sim::data::{DataLoader, ValidatedLoadError};
-use heliarca_sim::{Increment, SECONDS_PER_YEAR, Scenario, Sim};
+use heliarca_sim::ids::EntityId;
+use heliarca_sim::{
+    CommandOutcome, CommandRegistry, Increment, SECONDS_PER_DAY, SECONDS_PER_YEAR, Scenario, Sim,
+};
 
 use crate::CliError;
+use crate::script::{Script, days_to_seconds};
 use crate::timing::{Stopwatch, format_duration};
 
 /// Cantidad máxima de años de `--years`: acota el tiempo de una corrida y evita desbordes.
@@ -123,45 +127,159 @@ fn load_error_lines(error: &ValidatedLoadError) -> Vec<String> {
     }
 }
 
+/// Entradas del script ya enviadas, para informar fallos al aplicarse.
+struct ScriptRun {
+    /// `kind` de cada entrada, en orden (el id de comando `n` es la entrada `n + 1`).
+    kinds: Vec<&'static str>,
+    /// Cuántos registros del historial ya se revisaron.
+    checked: usize,
+}
+
+impl ScriptRun {
+    /// Revisa los registros nuevos del historial: un comando que falló al aplicarse detiene la
+    /// corrida con la entrada del script.
+    fn check_history(&mut self, sim: &Sim, path: &Path) -> Result<(), CliError> {
+        let history = sim.command_history();
+        for record in &history[self.checked..] {
+            if let CommandOutcome::Failed(error) = &record.outcome {
+                let index = usize::try_from(record.id.raw()).unwrap_or(usize::MAX);
+                let kind = self.kinds.get(index).copied().unwrap_or(record.kind);
+                return Err(CliError::Script(format!(
+                    "script {}: entrada {} ({kind}): falló al aplicarse en el paso {}: {error} [{}]",
+                    path.display(),
+                    index.saturating_add(1),
+                    record.step,
+                    error.loc_key()
+                )));
+            }
+        }
+        self.checked = history.len();
+        Ok(())
+    }
+}
+
+/// Avanza hasta `total` segundos enviando cada comando del script al llegar a su `at`.
+///
+/// Un comando se **envía** cuando el tiempo de simulación es exactamente `at` días y se **aplica
+/// al comienzo del paso siguiente** (el primer `advance` después del envío), como todo comando.
+/// Los comandos con el mismo `at` se envían juntos, en orden de archivo.
+fn run_script(
+    sim: &mut Sim,
+    chosen: Increment,
+    total: u64,
+    script: Script,
+    path: &Path,
+) -> Result<(), CliError> {
+    let mut state = ScriptRun {
+        kinds: script.entries.iter().map(|e| e.command.kind()).collect(),
+        checked: 0,
+    };
+    let fail = |index: usize, error: String| {
+        CliError::Script(format!(
+            "script {}: entrada {}: {error}",
+            path.display(),
+            index + 1
+        ))
+    };
+    for (index, entry) in script.entries.into_iter().enumerate() {
+        let at = days_to_seconds(entry.at_days)
+            .ok_or_else(|| fail(index, "`at` desborda el tiempo de simulación".into()))?;
+        let now = sim.time().as_seconds();
+        if at > now {
+            advance_total(sim, chosen, at - now)?;
+            state.check_history(sim, path)?;
+        }
+        let kind = entry.command.kind();
+        sim.submit_command(entry.command).map_err(|error| {
+            fail(
+                index,
+                format!(
+                    "el comando {kind} fue rechazado (día {}): {error} [{}]",
+                    entry.at_days,
+                    error.loc_key()
+                ),
+            )
+        })?;
+    }
+    advance_total(sim, chosen, total - sim.time().as_seconds())?;
+    state.check_history(sim, path)
+}
+
+/// Opciones de [`run`].
+pub struct RunOptions<'a> {
+    /// Directorio de datos.
+    pub data_dir: &'a Path,
+    /// Semilla.
+    pub seed: u64,
+    /// Años a simular.
+    pub years: u32,
+    /// Incremento elegido.
+    pub increment: IncrementArg,
+    /// Script de comandos, si se pasó `--script`.
+    pub script: Option<&'a Path>,
+}
+
 /// Ejecuta `run` y escribe el resumen en `out`.
 ///
 /// # Errors
 ///
-/// [`CliError::Data`] si los datos no cargan o no validan; [`CliError::Sim`]
-/// si la simulación falla (desborde, falta de progreso, fecha fuera de rango).
-pub fn run(
-    data_dir: &Path,
-    seed: u64,
-    years: u32,
-    increment: IncrementArg,
-    out: &mut dyn Write,
-) -> Result<(), CliError> {
+/// [`CliError::Data`] si los datos no cargan o no validan; [`CliError::Script`] si el script no
+/// se lee, es inválido o un comando falla; [`CliError::Sim`] si la simulación falla (desborde,
+/// falta de progreso, fecha fuera de rango).
+pub fn run(options: &RunOptions<'_>, out: &mut dyn Write) -> Result<(), CliError> {
+    let RunOptions {
+        data_dir,
+        seed,
+        years,
+        increment,
+        script,
+    } = *options;
     let validated = DataLoader::load_validated(data_dir)
         .map_err(|error| CliError::Data(load_error_lines(&error)))?;
     let total = total_seconds(years)
         .ok_or_else(|| CliError::Sim("el total de años desborda el tiempo de simulación".into()))?;
+    // El script se lee, valida y construye completo ANTES de correr nada.
+    let script = script
+        .map(|path| {
+            let loaded = Script::load(path, &CommandRegistry::builtin())
+                .and_then(|script| script.check_range(total / SECONDS_PER_DAY).map(|()| script))
+                .map_err(|error| CliError::Script(format!("script {}: {error}", path.display())))?;
+            Ok::<_, CliError>((path, loaded))
+        })
+        .transpose()?;
     let mut sim = Sim::new(Scenario::from_game_data(&validated.data), seed);
 
+    let script_info = script
+        .as_ref()
+        .map(|(path, script)| (path.display().to_string(), script.entries.len()));
     let watch = Stopwatch::start();
-    advance_total(&mut sim, increment.increment(), total)?;
+    match script {
+        None => advance_total(&mut sim, increment.increment(), total)?,
+        Some((path, script)) => run_script(&mut sim, increment.increment(), total, script, path)?,
+    }
     let elapsed = watch.elapsed_millis();
 
     let date = sim
         .date()
         .map_err(|error| CliError::Sim(error.to_string()))?;
     // Si stdout está cerrado no hay a quién avisar.
+    let _ = write!(out, "Años simulados: {years}\nSemilla: {seed}\n");
+    let _ = writeln!(out, "Incremento: {}", increment.name());
+    if let Some((path, count)) = &script_info {
+        let noun = if *count == 1 { "comando" } else { "comandos" };
+        let _ = writeln!(out, "Script: {path} ({count} {noun})");
+    }
+    let _ = writeln!(out, "Pasos: {}", sim.steps());
+    if script_info.is_some() {
+        // Si alguno hubiera fallado, la corrida ya habría terminado con error.
+        let _ = writeln!(out, "Comandos aplicados: {}", sim.command_history().len());
+    }
     let _ = write!(
         out,
-        "Años simulados: {years}\n\
-         Semilla: {seed}\n\
-         Incremento: {}\n\
-         Pasos: {}\n\
-         Fecha final: {date}\n\
+        "Fecha final: {date}\n\
          Eventos: {}\n\
          Hash de estado: {}\n\
          Duración real: {}\n",
-        increment.name(),
-        sim.steps(),
         sim.events().len(),
         sim.state_hash(),
         format_duration(elapsed, sim.steps()),

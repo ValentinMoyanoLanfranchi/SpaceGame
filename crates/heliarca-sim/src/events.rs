@@ -60,6 +60,8 @@ pub enum EventKind {
     InternalCrisis,
     /// Se cruzó el punto de salto.
     JumpPointCrossed,
+    /// Marca de diagnóstico del comando `debug.mark` (infraestructura de pruebas, no del juego).
+    DebugMark,
 }
 
 /// Efecto del evento sobre el avance del tiempo (doc 01 «Interrupciones»).

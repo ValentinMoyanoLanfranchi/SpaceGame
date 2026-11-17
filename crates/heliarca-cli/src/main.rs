@@ -2,12 +2,14 @@
 //!
 //! Sólo usa la API pública de `heliarca-sim` (`Sim`, `Scenario`...). Este archivo es el esqueleto
 //! de la CLI (#39): argumentos, subcomandos y códigos de salida. `validate-data` (#40) vive en
-//! [`validate`] y `run` (#41) en [`run`](mod@run); la medición de tiempo real, en [`timing`].
+//! [`validate`] y `run` (#41) en [`run`](mod@run), con los scripts de comandos (#42) de [`script`];
+//! la medición de tiempo real, en [`timing`].
 //!
 //! Códigos de salida: `0` éxito (incluye `--help` y `--version`), `1` error de datos o de
 //! simulación, `2` error de uso (argumentos inválidos).
 
 mod run;
+mod script;
 mod timing;
 mod validate;
 
@@ -59,6 +61,9 @@ enum Command {
         /// Incremento de tiempo de cada paso (con muchos años, los chicos son lentos: `s5` a 10000 años tarda ~16 min).
         #[arg(long, value_enum, default_value_t = run::IncrementArg::D1)]
         increment: run::IncrementArg,
+        /// Script JSON de comandos a enviar en momentos dados (ver el README, «Scripts de comandos»).
+        #[arg(long, value_name = "ARCHIVO")]
+        script: Option<PathBuf>,
     },
     /// Valida los archivos de datos de `--data-dir` e imprime todos los errores (código 1 si hay).
     ValidateData,
@@ -76,6 +81,9 @@ enum CliError {
     /// La simulación falló (desborde de tiempo, falta de progreso, fecha fuera de rango).
     #[error("{0}")]
     Sim(String),
+    /// El script de `run --script` no se pudo leer, es inválido o un comando falló (una línea).
+    #[error("{0}")]
+    Script(String),
     /// `validate-data` encontró errores en los datos (se imprimen uno por línea).
     #[error("{}", .0.summary())]
     InvalidData(validate::Report),
@@ -87,7 +95,7 @@ impl CliError {
         match self {
             // clap: 0 para ayuda/versión, 2 para errores de uso.
             Self::Usage(error) => u8::try_from(error.exit_code()).unwrap_or(2),
-            Self::Data(_) | Self::Sim(_) | Self::InvalidData(_) => 1,
+            Self::Data(_) | Self::Sim(_) | Self::Script(_) | Self::InvalidData(_) => 1,
         }
     }
 }
@@ -114,9 +122,20 @@ where
             let _ = writeln!(out, "{}", banner(cli.seed));
             Ok(())
         }
-        Some(Command::Run { years, increment }) => {
-            run::run(&cli.data_dir, cli.seed, years, increment, out)
-        }
+        Some(Command::Run {
+            years,
+            increment,
+            script,
+        }) => run::run(
+            &run::RunOptions {
+                data_dir: &cli.data_dir,
+                seed: cli.seed,
+                years,
+                increment,
+                script: script.as_deref(),
+            },
+            out,
+        ),
         Some(Command::ValidateData) => {
             let report = validate::validate(&cli.data_dir);
             if report.errors.is_empty() {
@@ -145,7 +164,7 @@ where
                     let target = if code == 0 { out } else { err };
                     let _ = write!(target, "{}", usage.render());
                 }
-                CliError::Sim(_) => {
+                CliError::Sim(_) | CliError::Script(_) => {
                     let _ = writeln!(err, "error: {error}");
                 }
                 CliError::Data(lines) => {
@@ -231,7 +250,8 @@ mod tests {
             cli.command,
             Some(Command::Run {
                 years: 40,
-                increment: run::IncrementArg::D1
+                increment: run::IncrementArg::D1,
+                script: None
             })
         );
         let cli = Cli::try_parse_from(["h", "run", "--years", "3", "--increment", "d30"]).unwrap();
@@ -239,7 +259,8 @@ mod tests {
             cli.command,
             Some(Command::Run {
                 years: 3,
-                increment: run::IncrementArg::D30
+                increment: run::IncrementArg::D30,
+                script: None
             })
         );
     }

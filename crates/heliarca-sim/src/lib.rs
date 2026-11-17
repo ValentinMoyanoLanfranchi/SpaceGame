@@ -96,6 +96,7 @@
 #[allow(dead_code)]
 mod arena;
 mod command;
+mod command_registry;
 pub mod data;
 mod events;
 pub mod ids;
@@ -119,6 +120,7 @@ mod state_hash;
 mod time;
 
 pub use command::{Command, CommandError, CommandId, CommandOutcome, CommandRecord};
+pub use command_registry::{CommandBuildError, CommandRegistry, MAX_MARK_LABEL_CHARS};
 pub use events::{
     CausalChain, Event, EventError, EventId, EventKind, EventLog, Interrupt, Payload, Value,
 };

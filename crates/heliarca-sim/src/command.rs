@@ -29,9 +29,9 @@
 //! Cada comando procesado deja un [`CommandRecord`] (append-only, en orden de aplicación) con su
 //! `kind` y sus argumentos como [`Payload`] (datos planos, serializables más adelante), el paso
 //! y el instante de aplicación y el resultado. Con la misma semilla, reenviar esos registros en
-//! los mismos pasos (`record.step`) y en el mismo orden reproduce el mismo estado. Reconstruir
-//! un comando a partir de `kind` + `args` (registro de comandos) y serializar el historial son
-//! trabajo posterior. El hash de estado ([`Sim::state_hash`]) cubre cola e historial.
+//! los mismos pasos (`record.step`) y en el mismo orden reproduce el mismo estado. Un comando se
+//! reconstruye con [`crate::CommandRegistry::build`] a partir de `kind` + `args`; serializar el
+//! historial es trabajo posterior. El hash de estado ([`Sim::state_hash`]) cubre cola e historial.
 //!
 //! Los envíos rechazados por `validate` **no** se registran: no cambiaron nada.
 //!
