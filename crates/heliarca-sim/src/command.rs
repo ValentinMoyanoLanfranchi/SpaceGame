@@ -213,6 +213,17 @@ pub(crate) struct CommandQueue {
 }
 
 impl CommandQueue {
+    /// `(próximo id, pendientes, historial)` para el hash de estado. Desestructura **sin `..`**:
+    /// un campo nuevo obliga a decidir si se hashea.
+    pub(crate) fn hash_parts(&self) -> (u32, &VecDeque<Queued>, &[CommandRecord]) {
+        let Self {
+            pending,
+            history,
+            next_id,
+        } = self;
+        (*next_id, pending, history)
+    }
+
     /// Arma la entrada de cola de un comando ya validado y reserva su id.
     pub(crate) fn prepare(
         &mut self,
@@ -244,16 +255,6 @@ impl CommandQueue {
 
     pub(crate) fn record(&mut self, record: CommandRecord) {
         self.history.push(record);
-    }
-
-    /// Próximo id de comando a asignar (para el hash de estado).
-    pub(crate) const fn next_id(&self) -> u32 {
-        self.next_id
-    }
-
-    /// Pendientes en orden de envío (para el hash de estado).
-    pub(crate) fn pending(&self) -> impl Iterator<Item = &Queued> {
-        self.pending.iter()
     }
 
     pub(crate) fn pending_len(&self) -> usize {

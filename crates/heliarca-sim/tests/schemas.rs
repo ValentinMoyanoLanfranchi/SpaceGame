@@ -215,6 +215,45 @@ fn casos() -> Vec<(&'static str, String)> {
         ("scenario_earth.json", inline(r#"{"inicio": {"dia": 1}}"#)),
         ("bodies.json", inline("[]")),
         (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_month": 30, "days_per_year": 365}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 1, "days_per_month": 1, "days_per_year": 1000000}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_year": 365}"#),
+        ),
+        (
+            "params.json",
+            inline(
+                r#"{"days_per_week": 7, "days_per_month": 30, "days_per_year": 365, "days_per_mes": 1}"#,
+            ),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_month": "30", "days_per_year": 365}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_month": 0, "days_per_year": 365}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_month": -1, "days_per_year": 365}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_month": 30, "days_per_year": 1000001}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 7, "days_per_month": 30.5, "days_per_year": 365}"#),
+        ),
+        ("params.json", inline("[]")),
+        (
             "bodies.json",
             inline(r#"[{"id": "b", "kind": "k", "radius_km": 1, "detect_difficulty": 256}]"#),
         ),
@@ -256,4 +295,38 @@ fn el_esquema_y_el_cargador_coinciden() {
             if valida { "acepta" } else { "rechaza" },
         );
     }
+}
+
+#[test]
+fn los_limites_del_esquema_de_params_salen_de_params() {
+    let schema: Value =
+        serde_json::from_str(&generate_all().unwrap()[&schema_path("params.json")]).unwrap();
+    let max = i64::try_from(heliarca_sim::Params::MAX_DAYS).unwrap();
+    let props = schema["properties"].as_object().expect("propiedades");
+    assert_eq!(props.len(), 3);
+    for (campo, def) in props {
+        assert_eq!(def["minimum"], 1, "{campo}");
+        assert_eq!(def["maximum"], max, "{campo}");
+    }
+    assert_eq!(schema["required"].as_array().unwrap().len(), 3);
+    assert_eq!(schema["additionalProperties"], false);
+}
+
+/// Divergencia conocida y deliberada: `days_per_week <= days_per_month <= days_per_year` es
+/// validación semántica del cargador; JSON Schema no compara campos entre sí.
+#[test]
+fn el_orden_semana_mes_anio_lo_valida_solo_el_cargador() {
+    let malo = r#"{"days_per_week": 40, "days_per_month": 30, "days_per_year": 365}"#;
+    assert!(validator("params.json").is_valid(&parse(malo)));
+    let dir = std::env::temp_dir().join(format!("heliarca-schema-orden-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    for f in DATA_FILES {
+        let dest = dir.join(f);
+        fs::create_dir_all(dest.parent().expect("tiene padre")).expect("crear dir");
+        fs::copy(repo_data().join(f), &dest).expect("copiar dato");
+    }
+    fs::write(dir.join("params.json"), malo).expect("escribir");
+    let carga = DataLoader::load_dir(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(carga.is_err());
 }

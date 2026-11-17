@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Parámetros globales del juego (`data/params.json`, doc 22 §0). Todos son obligatorios; no se admiten campos desconocidos. Además debe cumplirse days_per_week <= days_per_month <= days_per_year (lo valida el cargador).",
+  "properties": {
+    "days_per_month": {
+      "description": "Parámetro de días `days_per_month` (entero entre 1 y 1000000).",
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "days_per_week": {
+      "description": "Parámetro de días `days_per_week` (entero entre 1 y 1000000).",
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "days_per_year": {
+      "description": "Parámetro de días `days_per_year` (entero entre 1 y 1000000).",
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "days_per_week",
+    "days_per_month",
+    "days_per_year"
+  ],
+  "title": "Params",
+  "type": "object"
+}

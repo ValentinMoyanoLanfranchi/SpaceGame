@@ -57,6 +57,7 @@ pub fn schema_for_data_file(data_file: &str) -> Option<Schema> {
         | "companies.json" | "events.json" => root::<Vec<Entry>>(),
         "scenario_earth.json" => root::<ScenarioEarth>(),
         "loc/es.json" => root::<Localization>(),
+        "params.json" => crate::params::json_schema(),
         _ => return None,
     })
 }

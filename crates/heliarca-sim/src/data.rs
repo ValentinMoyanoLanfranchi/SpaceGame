@@ -49,6 +49,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::params::Params;
+
 // Registro de ids y validación de referencias (#32): vive en `registry.rs` y se expone aquí,
 // junto al cargador, que es la ruta pública de los datos.
 pub use crate::registry::{
@@ -57,7 +59,7 @@ pub use crate::registry::{
 };
 
 /// Archivos que lee el cargador, en el orden en que los lee (doc 22 §11), relativos a `data/`.
-pub const DATA_FILES: [&str; 10] = [
+pub const DATA_FILES: [&str; 11] = [
     "bodies.json",
     "goods.json",
     "recipes.json",
@@ -68,6 +70,9 @@ pub const DATA_FILES: [&str; 10] = [
     "scenario_earth.json",
     "events.json",
     "loc/es.json",
+    // Extensión pedida por el issue #36: doc 22 §11 no lista `params.json`. Va al final para no
+    // alterar el orden de los demás archivos.
+    "params.json",
 ];
 
 /// Forma de órbita de un cuerpo. El MVP sólo usa órbitas circulares (doc 22 §0).
@@ -169,6 +174,8 @@ pub struct GameData {
     pub events: Vec<Entry>,
     /// `loc/es.json`.
     pub loc_es: Localization,
+    /// `params.json`: parámetros globales (ver [`crate::Params`]).
+    pub params: Params,
 }
 
 /// Un error al cargar los datos. Su `Display` es texto técnico en español para logs y la CLI.
@@ -315,6 +322,7 @@ impl DataLoader {
             scenario,
             events,
             loc,
+            params,
         ] = DATA_FILES;
         let data = GameData {
             bodies: load_list(dir, bodies, &mut errors),
@@ -327,6 +335,7 @@ impl DataLoader {
             scenario_earth: load_object(dir, scenario, &mut errors),
             events: load_list(dir, events, &mut errors),
             loc_es: load_object(dir, loc, &mut errors),
+            params: load_params(dir, params, &mut errors),
         };
         if errors.is_empty() {
             Ok(data)
@@ -424,6 +433,34 @@ fn load_list<T: DeserializeOwned>(
         }
     }
     out
+}
+
+/// Carga `params.json` (objeto con los parámetros globales): un error por parámetro, con su nombre.
+fn load_params(dir: &Path, file: &'static str, errors: &mut Vec<DataError>) -> Params {
+    let Some(root) = read_json(dir, file, errors) else {
+        return Params::default();
+    };
+    if !root.is_object() {
+        errors.push(DataError::WrongRoot {
+            file,
+            expected: "un objeto",
+        });
+        return Params::default();
+    }
+    match Params::from_json_value(&root) {
+        Ok(params) => params,
+        Err(issues) => {
+            for issue in issues {
+                errors.push(DataError::Schema {
+                    file,
+                    entry: None,
+                    field: Some(issue.field().to_owned()),
+                    message: issue.message().to_owned(),
+                });
+            }
+            Params::default()
+        }
+    }
 }
 
 /// Carga un archivo cuya raíz es un objeto, deserializado como `T`.

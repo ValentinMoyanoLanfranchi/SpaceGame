@@ -216,6 +216,16 @@ impl Default for Calendar {
 }
 
 impl Calendar {
+    /// Fecha de inicio para el hash de estado. Desestructura **sin `..`**: un campo nuevo obliga
+    /// a decidir si se hashea. `start_offset` se excluye a propósito: se deriva de `start`.
+    pub(crate) const fn hash_parts(&self) -> CalendarDate {
+        let Self {
+            start,
+            start_offset: _derivado_de_start,
+        } = *self;
+        start
+    }
+
     /// Crea un calendario cuyo `SimTime = 0` corresponde a `start`.
     ///
     /// # Errors
