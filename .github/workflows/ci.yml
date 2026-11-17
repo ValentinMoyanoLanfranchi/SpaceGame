@@ -49,6 +49,10 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/ci/check-workflow-aggregator.sh
 
+      - name: Config de clippy sin deriva (msrv, std::time, HashMap/HashSet)
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/check-clippy-config.sh
+
       # actionlint oficial (sin acciones de terceros): versión fijada y binario verificado
       # contra un SHA-256 (de checksums.txt del release v1.7.12) antes de ejecutarlo.
       - name: actionlint
