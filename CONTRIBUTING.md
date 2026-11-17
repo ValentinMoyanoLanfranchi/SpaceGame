@@ -92,5 +92,14 @@ PROPTEST_RNG_SEED=12345 PROPTEST_CASES=2000 cargo test -p heliarca-sim --test pr
 
 `PROPTEST_RNG_SEED` (un `u64`) fija la semilla; `PROPTEST_CASES`, la cantidad de casos; el resto de las variables `PROPTEST_*` también se respetan. Cuando una corrida con otra semilla falla, esa semilla más el caso mínimo son suficientes para reproducirlo.
 
+## Invariantes del simulador
+Un **invariante** es una regla que el estado de `Sim` cumple siempre entre dos pasos (el tiempo no retrocede, los ids de evento son secuenciales, cada causa es anterior a su efecto, los ids de comando crecen...). Es la **red de seguridad** del doc 21 §2 y §4 («no se crean ni destruyen recursos sin receta» será uno más cuando haya recursos): detecta errores de programación que corromperían el estado, **no** valida entradas del jugador (eso es `Command::validate`).
+
+- **API:** `Sim::check_invariants() -> Result<(), Violation>` devuelve la **primera** violación; `Violation` dice el invariante (nombre estable `dominio.regla`, p. ej. `time.monotonic`), la entidad (`event#7`, `command#3`, `system.<id>`, `sim.time`) y el detalle en español. El trait `Invariant` es interno al crate a propósito: el catálogo crece con cada módulo y no debe quedar fijado en la API pública.
+- **Cuándo corre solo:** `Sim::advance` lo corre antes y después de cada paso **sólo** en tests y compilaciones con `debug_assertions` y devuelve `AdvanceError::InvariantViolated`. En release **no** corre (costo cero). Cada chequeo es O(estado): es para desarrollo, no para cada cuadro. No corre en `Sim::new` ni en `Sim::submit_command`.
+- **Agregar un invariante:** en el módulo dueño del estado, una función `fn check_xxx(sim: &Sim) -> Result<(), Violation>` y una entrada en su constante `INVARIANTS` (`FnInvariant::new("modulo.nombre", check_xxx)`). El nombre es estable y no se renombra. Tiene que ser barato, determinista y sin efectos (sin `HashMap`, sin `unwrap`/`panic!`). Agregá un test `cfg(test)` que corrompa el estado a propósito (hay helpers `*_for_test`) y verifique nombre y entidad exactos. El módulo nuevo se suma a `invariants::all`.
+- **Estado que el chequeo necesita recordar** (como el mojón de tiempo de `time.monotonic`) es contabilidad derivada: **no** entra al hash de estado (ver «Qué es "estado"...» arriba); verificá que `state_hash()` no cambie.
+- Detalle y política completos en el módulo interno `crates/heliarca-sim/src/invariants.rs`.
+
 ## Alcance
 La lista de **excluidos del MVP** (doc 21 §1) es una regla: combate, espionaje, mercados grises, varias especies, diplomacia con líderes, regiones en la Tierra, órbitas elípticas, etc. Cualquier idea nueva va al backlog posterior, no al MVP.

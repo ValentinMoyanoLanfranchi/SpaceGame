@@ -31,6 +31,8 @@ use crate::command::{
     Command, CommandError, CommandId, CommandOutcome, CommandQueue, CommandRecord,
 };
 use crate::events::{Event, EventId, EventLog, Interrupt};
+use crate::ids::EntityId;
+use crate::invariants::{self, FnInvariant, Mark, Violation, entity_command};
 use crate::params::Params;
 use crate::rng::Rng;
 use crate::scenario::Scenario;
@@ -38,13 +40,29 @@ use crate::schedule::Scheduler;
 use crate::state_hash::{StateHash, hash_sim};
 use crate::time::{Calendar, CalendarDate, CalendarError, Increment, SimTime};
 
-/// Error de [`Sim::advance`]. Si ocurre, **no** se aplicó ningún comando ni cambió el estado.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+/// Error de [`Sim::advance`].
+///
+/// Con [`AdvanceError::TimeOverflow`] **no** se aplicó ningún comando ni cambió el estado. Con
+/// [`AdvanceError::InvariantViolated`] depende de cuándo se detectó (ver esa variante).
+///
+/// No es `Copy` (la violación lleva texto); es `#[non_exhaustive]`, así que agregar variantes no
+/// rompe a quien ya hace `match` con un brazo comodín.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum AdvanceError {
     /// El avance desbordaría el tiempo de simulación representable (`u64` segundos).
     #[error("el avance desborda el tiempo de simulación")]
     TimeOverflow,
+    /// Se rompió un invariante del estado (ver [`Sim::check_invariants`]). Es un **error de
+    /// programación**, no algo que el jugador pueda causar ni se pueda reintentar.
+    ///
+    /// Sólo se devuelve en tests y compilaciones con `debug_assertions`; en release no se
+    /// chequea. Si se detectó **antes** de aplicar el paso (corrupción entre pasos) no se tocó
+    /// nada; si se detectó **al terminar** el paso, el paso ya se aplicó (comandos, eventos y
+    /// tiempo), pero no se da por bueno: el mojón de tiempo no avanza y el siguiente `advance`
+    /// vuelve a fallar mientras la violación persista.
+    #[error("se violó un invariante del estado: {0}")]
+    InvariantViolated(Violation),
 }
 
 /// Resultado de un [`Sim::advance`] que se llevó a cabo.
@@ -179,6 +197,54 @@ pub struct Sim {
     /// Avances (llamadas a `advance` que se llevaron a cabo) hasta ahora (clave para reproducir un
     /// historial de comandos). Contabilidad de llamadas: **no** entra al hash de estado.
     steps: u64,
+    /// Mojón del tiempo al terminar el último paso, para el invariante `time.monotonic`.
+    /// Contabilidad derivada: **no** entra al hash de estado (ver `invariants`).
+    invariant_mark: Mark,
+}
+
+/// Invariantes propios de `Sim` (los de cada módulo están en sus constantes `INVARIANTS`).
+pub(crate) const INVARIANTS: &[FnInvariant] = &[
+    FnInvariant::new("sim.steps_cover_history", check_steps_cover_history),
+    FnInvariant::new("sim.history_not_in_future", check_history_not_in_future),
+];
+
+/// Ningún comando del historial se aplicó en un paso posterior al actual: `step <= steps` (un
+/// comando se registra con el índice del paso en curso, que se cuenta al terminar; tras un
+/// pánico de `apply` el índice sigue siendo el mismo, de ahí el `<=`).
+fn check_steps_cover_history(sim: &Sim) -> Result<(), Violation> {
+    for record in sim.command_history() {
+        if record.step > sim.steps {
+            return Err(Violation::new(
+                "sim.steps_cover_history",
+                Some("sim.steps".to_owned()),
+                format!(
+                    "el comando {id} figura aplicado en el paso {step}, pero sólo se llevan {steps} pasos",
+                    id = entity_command(record.id.raw()),
+                    step = record.step,
+                    steps = sim.steps,
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Nada se aplicó en un instante posterior al actual.
+fn check_history_not_in_future(sim: &Sim) -> Result<(), Violation> {
+    for record in sim.command_history() {
+        if record.applied_at > sim.time() {
+            return Err(Violation::new(
+                "sim.history_not_in_future",
+                Some(entity_command(record.id.raw())),
+                format!(
+                    "el comando se aplicó a los {} s, pero el tiempo actual es {} s",
+                    record.applied_at.as_seconds(),
+                    sim.time().as_seconds()
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Sim {
@@ -196,7 +262,54 @@ impl Sim {
             events: EventLog::new(),
             commands: CommandQueue::default(),
             steps: 0,
+            invariant_mark: Mark::default(),
         }
+    }
+
+    /// Comprueba los invariantes del estado (doc 21 §2 y §4) y devuelve la **primera**
+    /// violación, en el orden fijo del registro de invariantes; `Ok(())` si se cumplen todos.
+    ///
+    /// Es la red de seguridad del simulador: detecta estados corruptos por errores de
+    /// programación (el tiempo retrocedió, un evento cita una causa posterior, los ids de
+    /// comando se desordenaron...), indicando el invariante (nombre estable, p. ej.
+    /// `time.monotonic`) y la entidad afectada. **No** valida entradas del jugador. No modifica
+    /// el estado ni el hash.
+    ///
+    /// Cuesta O(tamaño del estado). [`Sim::advance`] la corre solo antes y después de cada paso
+    /// en tests y compilaciones con `debug_assertions`; en release no se corre sola. Detalle y
+    /// cómo agregar invariantes: módulo interno `invariants`.
+    ///
+    /// # Ejemplo
+    ///
+    /// ```
+    /// use heliarca_sim::{Increment, Scenario, Sim};
+    ///
+    /// let mut sim = Sim::new(Scenario::default(), 42);
+    /// sim.advance(Increment::D30)?;
+    /// assert!(sim.check_invariants().is_ok());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// La [`Violation`] del primer invariante que no se cumple.
+    pub fn check_invariants(&self) -> Result<(), Violation> {
+        invariants::check_all(self)
+    }
+
+    /// Planificador (lectura): para los invariantes.
+    pub(crate) const fn scheduler(&self) -> &Scheduler {
+        &self.scheduler
+    }
+
+    /// Cola e historial de comandos (lectura): para los invariantes.
+    pub(crate) const fn commands(&self) -> &CommandQueue {
+        &self.commands
+    }
+
+    /// Mojón del invariante de tiempo: el instante al terminar el último paso.
+    pub(crate) const fn invariant_mark(&self) -> Mark {
+        self.invariant_mark
     }
 
     /// Hash estable de 128 bits de **todo el estado simulado**: semilla y estado del RNG,
@@ -251,6 +364,9 @@ impl Sim {
             // Contabilidad de llamadas (cómo se partió el avance), no estado simulado: 30 × D1 y
             // 1 × D30 simulan lo mismo y deben dar el mismo hash (ver `state_hash`).
             steps: _contabilidad_de_llamadas,
+            // Mojón de invariantes: contabilidad derivada (el tiempo al final del último paso),
+            // no estado simulado; el chequeo no puede cambiar el hash.
+            invariant_mark: _mojon_de_invariantes,
         } = self;
         hash_sim(rng, calendar, params, scheduler, events, commands)
     }
@@ -341,6 +457,30 @@ impl Sim {
         &mut self.scheduler
     }
 
+    /// Mojón (escritura): para simular un estado corrupto en los tests de invariantes.
+    #[cfg(test)]
+    pub(crate) fn invariant_mark_mut(&mut self) -> &mut Mark {
+        &mut self.invariant_mark
+    }
+
+    /// Fija el contador de pasos (para los tests de invariantes).
+    #[cfg(test)]
+    pub(crate) fn set_steps_for_test(&mut self, steps: u64) {
+        self.steps = steps;
+    }
+
+    /// Cola, historial y próximo id de comando (escritura): para corromperlos en los tests.
+    #[cfg(test)]
+    pub(crate) fn commands_for_test(
+        &mut self,
+    ) -> (
+        &mut std::collections::VecDeque<crate::command::Queued>,
+        &mut Vec<CommandRecord>,
+        &mut u32,
+    ) {
+        self.commands.parts_for_test()
+    }
+
     /// Valida un comando y, si es válido, lo encola. **No lo aplica**: se aplicará al comienzo
     /// del siguiente [`Sim::advance`], en orden de envío (FIFO).
     ///
@@ -419,15 +559,28 @@ impl Sim {
     /// Para el comportamiento ante un pánico y lo que ve cada comando durante el paso, ver la
     /// documentación de [`Sim`].
     ///
+    /// # Invariantes
+    ///
+    /// Con `cfg(any(test, debug_assertions))` corre [`Sim::check_invariants`] **antes** de
+    /// aplicar el paso y **otra vez al terminar**; en release no (costo cero). Al terminar un
+    /// paso (con o sin chequeo) se actualiza el mojón de tiempo. No corre en [`Sim::new`] ni en
+    /// [`Sim::submit_command`]: ver el módulo interno `invariants`.
+    ///
     /// # Errors
     ///
-    /// [`AdvanceError::TimeOverflow`] si el incremento desborda el tiempo. Se comprueba
-    /// **antes** de tocar nada: no se aplica ningún comando y el estado no cambia.
+    /// - [`AdvanceError::TimeOverflow`] si el incremento desborda el tiempo. Se comprueba
+    ///   **antes** de tocar nada: no se aplica ningún comando y el estado no cambia.
+    /// - [`AdvanceError::InvariantViolated`] si, en tests o debug, el estado rompe un invariante
+    ///   (ver esa variante para qué quedó aplicado).
     pub fn advance(&mut self, increment: Increment) -> Result<AdvanceResult, AdvanceError> {
         let start = self.time();
         let target = start
             .checked_advance(increment)
             .ok_or(AdvanceError::TimeOverflow)?;
+        // Red de seguridad sólo en tests y debug: corrupción ocurrida entre pasos.
+        #[cfg(any(test, debug_assertions))]
+        self.check_invariants()
+            .map_err(AdvanceError::InvariantViolated)?;
         self.apply_pending_commands();
         self.steps = self.steps.saturating_add(1);
 
@@ -443,6 +596,12 @@ impl Sim {
         // Una sola vez por avance, al final (o donde se detuvo).
         self.scheduler.run_every_increment(&mut self.events);
         let interrupted_by = self.first_interrupt_since(first_system_event);
+
+        // Y un paso que dejó el estado mal: no se da por bueno (no se actualiza el mojón).
+        #[cfg(any(test, debug_assertions))]
+        self.check_invariants()
+            .map_err(AdvanceError::InvariantViolated)?;
+        self.invariant_mark.record(self.time());
 
         Ok(AdvanceResult {
             requested: increment,
