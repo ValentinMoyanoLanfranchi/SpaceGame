@@ -1,0 +1,17 @@
+[
+  { "id": "body.tierra", "kind": "planet", "radius_km": 6371, "detect_difficulty": 0 },
+  {
+    "id": "body.luna",
+    "kind": "moon",
+    "parent": "body.tierra",
+    "orbit": { "type": "circular", "radius_km": 384400, "period_days": 27.3 },
+    "radius_km": 1737,
+    "detect_difficulty": 0,
+    "habitability": 0.30,
+    "deposits": [
+      { "good": "good.silicatos", "reserve_mt": 1000000, "access": 0.9 },
+      { "good": "good.hierro", "reserve_mt": 200000, "access": 0.7 },
+      { "good": "good.hielo", "reserve_mt": 600, "access": 0.3 }
+    ]
+  }
+]

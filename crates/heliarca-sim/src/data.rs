@@ -48,6 +48,13 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 
+// Registro de ids y validación de referencias (#32): vive en `registry.rs` y se expone aquí,
+// junto al cargador, que es la ruta pública de los datos.
+pub use crate::registry::{
+    CompanyId, FacilityId, RecipeId, Registry, RegistryError, RegistryErrors, SocialEventId,
+    ValidatedData, ValidatedLoadError,
+};
+
 /// Archivos que lee el cargador, en el orden en que los lee (doc 22 §11), relativos a `data/`.
 pub const DATA_FILES: [&str; 10] = [
     "bodies.json",

@@ -83,6 +83,7 @@ mod command;
 pub mod data;
 mod events;
 pub mod ids;
+mod registry;
 #[allow(dead_code)]
 mod rng;
 mod scenario;
