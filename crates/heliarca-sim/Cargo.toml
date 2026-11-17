@@ -16,6 +16,11 @@ serde_json = { version = "1.0.154", default-features = false, features = ["std"]
 serde_path_to_error = "0.1.20"
 thiserror = { version = "2.0.21", default-features = false }
 
+[lib]
+# El arnés de libtest rechaza las opciones de criterion (`--save-baseline`, `--baseline`):
+# `cargo bench` sólo debe correr `benches/`. No afecta a `cargo test`.
+bench = false
+
 [lints]
 workspace = true
 
@@ -24,3 +29,9 @@ jsonschema = { version = "0.61.2", default-features = false }
 # Tests de propiedades (CONTRIBUTING.md, «Tests de propiedades»). Sólo `std`: sin `fork`/`timeout`
 # (rusty-fork, tempfile) ni `bit-set`, para un árbol de dependencias mínimo.
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+# Benchmarks (README, «Benchmarks»). `plotters` da los gráficos del reporte en HTML; sin `rayon`.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support", "plotters"] }
+
+[[bench]]
+name = "advance"
+harness = false
