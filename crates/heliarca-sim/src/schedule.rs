@@ -42,7 +42,9 @@
 use std::fmt;
 
 use crate::events::{EventError, EventId, EventKind, EventLog, Interrupt, Payload};
+use crate::invariants::{FnInvariant, Violation};
 use crate::params::Params;
+use crate::sim::Sim;
 use crate::state_hash::StateWriter;
 use crate::time::{SECONDS_PER_DAY, SimTime};
 
@@ -215,6 +217,79 @@ pub struct Scheduler {
     systems: Vec<Box<dyn System>>,
 }
 
+/// Invariantes del planificador y del tiempo (ver el módulo `invariants`).
+pub(crate) const INVARIANTS: &[FnInvariant] = &[
+    FnInvariant::new("time.monotonic", check_time_monotonic),
+    FnInvariant::new("schedule.unique_ids", check_unique_ids),
+    FnInvariant::new("schedule.order", check_order),
+    FnInvariant::new("schedule.params_match_sim", check_params_match_sim),
+];
+
+/// El tiempo nunca retrocede respecto del final del último paso (el mojón del `Sim`).
+fn check_time_monotonic(sim: &Sim) -> Result<(), Violation> {
+    let (now, mark) = (sim.time(), sim.invariant_mark().time());
+    if now < mark {
+        return Err(Violation::new(
+            "time.monotonic",
+            Some("sim.time".to_owned()),
+            format!(
+                "el tiempo retrocedió: al terminar el paso anterior era {} s y ahora es {} s",
+                mark.as_seconds(),
+                now.as_seconds()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Los ids de sistema son únicos (`register` lo garantiza; esto lo vigila).
+fn check_unique_ids(sim: &Sim) -> Result<(), Violation> {
+    let systems = sim.scheduler().systems();
+    for (index, system) in systems.iter().enumerate() {
+        let id = system.id();
+        if systems[..index].iter().any(|earlier| earlier.id() == id) {
+            return Err(Violation::new(
+                "schedule.unique_ids",
+                Some(format!("system.{id}")),
+                format!("hay más de un sistema registrado con id «{id}»"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Los sistemas están ordenados estrictamente por (prioridad, id): de eso depende el orden
+/// determinista de ejecución.
+fn check_order(sim: &Sim) -> Result<(), Violation> {
+    for pair in sim.scheduler().systems().windows(2) {
+        let (before, after) = (order_key(pair[0].as_ref()), order_key(pair[1].as_ref()));
+        if before >= after {
+            return Err(Violation::new(
+                "schedule.order",
+                Some(format!("system.{}", after.1)),
+                format!(
+                    "«{}» (prioridad {}) figura después de «{}» (prioridad {}), pero no es mayor en (prioridad, id)",
+                    after.1, after.0.0, before.1, before.0.0
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// El planificador usa los mismos parámetros que el `Sim` (es una copia que fija las cadencias).
+fn check_params_match_sim(sim: &Sim) -> Result<(), Violation> {
+    if sim.scheduler().params != *sim.params() {
+        return Err(Violation::new(
+            "schedule.params_match_sim",
+            Some("scheduler.params".to_owned()),
+            "los parámetros del planificador difieren de los del Sim: las cadencias no \
+             corresponderían a los datos",
+        ));
+    }
+    Ok(())
+}
+
 fn order_key(system: &dyn System) -> (Priority, SystemId) {
     (system.priority(), system.id())
 }
@@ -285,6 +360,18 @@ impl Scheduler {
     /// Sistemas registrados, en orden de ejecución (prioridad, id), para el hash de estado.
     pub(crate) fn systems(&self) -> &[Box<dyn System>] {
         &self.systems
+    }
+
+    /// Sistemas (escritura): para corromper el orden en los tests de invariantes.
+    #[cfg(test)]
+    pub(crate) fn systems_for_test(&mut self) -> &mut Vec<Box<dyn System>> {
+        &mut self.systems
+    }
+
+    /// Fija los parámetros sin más (para los tests de invariantes).
+    #[cfg(test)]
+    pub(crate) fn set_params_for_test(&mut self, params: Params) {
+        self.params = params;
     }
 
     /// Fija el instante sin ejecutar nada (para probar el desborde).
