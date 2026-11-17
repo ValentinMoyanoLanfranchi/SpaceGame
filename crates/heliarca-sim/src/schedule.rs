@@ -2,8 +2,9 @@
 //!
 //! # Convención de calendario de cadencias (doc 22 §0)
 //!
-//! Semana = [`DAYS_PER_WEEK`] (7) días, mes = [`DAYS_PER_MONTH`] (30) días y año =
-//! [`DAYS_PER_YEAR`] (365) días. Los meses **no** se alinean con el año (12 meses = 360 días):
+//! Por defecto semana = [`DAYS_PER_WEEK`] (7) días, mes = [`DAYS_PER_MONTH`] (30) días y año =
+//! [`DAYS_PER_YEAR`] (365) días; son los valores de [`Params::DEFAULT`] y salen de
+//! `data/params.json` ([`Scheduler::with_params`], módulo `params`). Los meses **no** se alinean con el año (12 meses = 360 días):
 //! la cadencia mensual dispara cada 30 días exactos, de modo que en 365 días corre 12 veces.
 //!
 //! # Qué significa «cruzar una frontera»
@@ -41,11 +42,12 @@
 use std::fmt;
 
 use crate::events::{EventError, EventId, EventKind, EventLog, Interrupt, Payload};
-use crate::time::{SECONDS_PER_DAY, SECONDS_PER_YEAR, SimTime};
+use crate::params::Params;
+use crate::time::{SECONDS_PER_DAY, SimTime};
 
-/// Días por semana (convención de cadencias, doc 22 §0).
+/// Días por semana del GDD (doc 22 §0): valor por defecto de `days_per_week` ([`Params`]).
 pub const DAYS_PER_WEEK: u64 = 7;
-/// Días por mes (convención de cadencias, doc 22 §0).
+/// Días por mes del GDD (doc 22 §0): valor por defecto de `days_per_month` ([`Params`]).
 pub const DAYS_PER_MONTH: u64 = 30;
 /// Segundos por semana.
 pub const SECONDS_PER_WEEK: u64 = SECONDS_PER_DAY * DAYS_PER_WEEK;
@@ -68,15 +70,24 @@ pub enum Cadence {
 }
 
 impl Cadence {
-    /// Período en segundos; `None` para [`Cadence::EveryIncrement`] (no tiene período fijo).
+    /// Período en segundos con los parámetros por defecto del GDD ([`Params::DEFAULT`]);
+    /// `None` para [`Cadence::EveryIncrement`] (no tiene período fijo).
     #[must_use]
     pub const fn period_seconds(self) -> Option<u64> {
+        self.period_seconds_with(&Params::DEFAULT)
+    }
+
+    /// Período en segundos según los `params` dados (días por semana, mes y año);
+    /// `None` para [`Cadence::EveryIncrement`].
+    #[must_use]
+    pub const fn period_seconds_with(self, params: &Params) -> Option<u64> {
         match self {
             Self::EveryIncrement => None,
             Self::Daily => Some(SECONDS_PER_DAY),
-            Self::Weekly => Some(SECONDS_PER_WEEK),
-            Self::Monthly => Some(SECONDS_PER_MONTH),
-            Self::Yearly => Some(SECONDS_PER_YEAR),
+            // `Params` acota los días a `MAX_DAYS`: no desborda; `saturating` por si acaso.
+            Self::Weekly => Some(SECONDS_PER_DAY.saturating_mul(params.days_per_week())),
+            Self::Monthly => Some(SECONDS_PER_DAY.saturating_mul(params.days_per_month())),
+            Self::Yearly => Some(SECONDS_PER_DAY.saturating_mul(params.days_per_year())),
         }
     }
 }
@@ -188,6 +199,8 @@ impl std::error::Error for ScheduleError {}
 #[derive(Debug, Default)]
 pub struct Scheduler {
     time: SimTime,
+    /// Parámetros que fijan el período de las cadencias semanal, mensual y anual.
+    params: Params,
     /// Siempre ordenado por (prioridad, id): independiente del orden de registro.
     systems: Vec<Box<dyn System>>,
 }
@@ -201,6 +214,15 @@ impl Scheduler {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Planificador vacío cuyas cadencias semanal, mensual y anual salen de `params`.
+    #[must_use]
+    pub fn with_params(params: Params) -> Self {
+        Self {
+            params,
+            ..Self::default()
+        }
     }
 
     /// Instante actual.
@@ -254,7 +276,7 @@ impl Scheduler {
         for period in self
             .systems
             .iter()
-            .filter_map(|s| s.cadence().period_seconds())
+            .filter_map(|s| s.cadence().period_seconds_with(&self.params))
         {
             // `None` sólo cerca de `u64::MAX`: esa frontera no es representable, no cuenta.
             let boundary = (after.as_seconds() / period + 1).checked_mul(period);
@@ -281,7 +303,7 @@ impl Scheduler {
         // desborda.
         let mut runs: Vec<(SimTime, usize)> = Vec::new();
         for (index, system) in self.systems.iter().enumerate() {
-            if let Some(period) = system.cadence().period_seconds() {
+            if let Some(period) = system.cadence().period_seconds_with(&self.params) {
                 let first = from.as_seconds() / period + 1;
                 let last = to.as_seconds() / period;
                 for k in first..=last {
@@ -316,7 +338,7 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time::Increment;
+    use crate::time::{Increment, SECONDS_PER_YEAR};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 

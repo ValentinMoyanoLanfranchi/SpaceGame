@@ -53,6 +53,9 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
    - Se hace cumplir con `clippy::disallowed_types` en `crates/heliarca-sim/clippy.toml`; el CI corre `cargo clippy ... -D warnings` y falla si aparecen, también en tests. `heliarca-cli` y `heliarca-godot` no están alcanzados.
    - Clippy no mira dependencias: un tipo de otra librería con hasher aleatorio interno no se detecta, hay que revisarlo en code review.
 3. Dirigida por datos: bienes, recetas, techs, diseños, cuerpos y textos en JSON.
+   - **Regla: todo número del GDD es un parámetro.** Lo que el diseño pueda querer ajustar (o que el GDD fije como convención: días por semana, mes y año, doc 22 §0) vive en `data/params.json` y se lee vía `Sim::params()`; nunca como literal en el código. Cambiar el JSON cambia el comportamiento sin recompilar.
+   - Quedan como constantes de código sólo las **definiciones de unidad** o identidades físicas que ningún diseño ajusta (60 s por minuto, 60 min por hora, 24 h por día). Ante la duda: si el diseño podría querer otro valor, es un parámetro.
+   - Para agregar un parámetro: campo en `Params` (con la unidad en el nombre) + valor por defecto del GDD + validación de rango + entrada en `data/params.json` (todos son obligatorios; un campo faltante o desconocido es error) + esquema JSON si el repo ya los genera + tests. Detalle en el módulo `heliarca_sim::params`.
 4. El jugador actúa por **comandos**; la UI lee **modelos de vista**, no el estado interno.
 5. IDs tipados y arenas; errores con `Result`; `clippy` y `rustfmt` obligatorios.
 

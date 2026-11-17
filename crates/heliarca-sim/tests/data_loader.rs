@@ -310,3 +310,123 @@ fn la_carga_es_determinista() {
     let claves: Vec<_> = a.scenario_earth.keys().map(String::as_str).collect();
     assert_eq!(claves, ["a", "b", "c"]);
 }
+
+// ---- params.json (parámetros globales, #36) ----
+
+#[test]
+fn el_params_json_real_coincide_con_el_gdd() {
+    let data = DataLoader::load_dir(repo_data()).expect("data/ debe cargar");
+    let p = data.params;
+    assert_eq!(
+        (p.days_per_week(), p.days_per_month(), p.days_per_year()),
+        (7, 30, 365)
+    );
+    assert_eq!(p, heliarca_sim::Params::default());
+}
+
+#[test]
+fn params_json_con_valores_propios_se_carga() {
+    let sb = Sandbox::new("params_ok");
+    sb.put(
+        "params.json",
+        r#"{"days_per_week": 5, "days_per_month": 10, "days_per_year": 100}"#,
+    );
+    let data = sb.load().expect("debe cargar");
+    assert_eq!(data.params, heliarca_sim::Params::new(5, 10, 100).unwrap());
+    let scenario = heliarca_sim::Scenario::from_game_data(&data);
+    assert_eq!(
+        heliarca_sim::Sim::new(scenario, 1)
+            .params()
+            .days_per_month(),
+        10
+    );
+}
+
+#[test]
+fn params_falta_un_obligatorio() {
+    let sb = Sandbox::new("params_falta");
+    sb.put(
+        "params.json",
+        r#"{"days_per_week": 7, "days_per_year": 365}"#,
+    );
+    assert_eq!(
+        texts(&sb.errors()),
+        ["params.json: days_per_month: falta el parámetro obligatorio"]
+    );
+}
+
+#[test]
+fn params_tipo_equivocado_campo_desconocido_y_valores_invalidos() {
+    let casos = [
+        (
+            r#"{"days_per_week": 7, "days_per_month": "30", "days_per_year": 365}"#,
+            "params.json: days_per_month: se esperaba un entero no negativo",
+        ),
+        (
+            r#"{"days_per_week": 7, "days_per_month": 30.5, "days_per_year": 365}"#,
+            "params.json: days_per_month: se esperaba un entero no negativo",
+        ),
+        (
+            r#"{"days_per_week": 7, "days_per_month": -3, "days_per_year": 365}"#,
+            "params.json: days_per_month: se esperaba un entero no negativo",
+        ),
+        (
+            r#"{"days_per_week": 7, "days_per_month": 30, "days_per_year": 365, "days_per_mes": 1}"#,
+            "params.json: days_per_mes: campo desconocido",
+        ),
+        (
+            r#"{"days_per_week": 7, "days_per_month": 0, "days_per_year": 365}"#,
+            "params.json: days_per_month: fuera de rango",
+        ),
+        (
+            r#"{"days_per_week": 40, "days_per_month": 30, "days_per_year": 365}"#,
+            "params.json: days_per_week: 40 no puede superar",
+        ),
+        (
+            r#"{"days_per_week": 7, "days_per_month": 30, "days_per_year": 20}"#,
+            "params.json: days_per_month: 30 no puede superar",
+        ),
+    ];
+    for (i, (json, esperado)) in casos.into_iter().enumerate() {
+        let sb = Sandbox::new(&format!("params_malo{i}"));
+        sb.put("params.json", json);
+        let errors = texts(&sb.errors());
+        assert!(
+            errors.iter().any(|e| e.starts_with(esperado)),
+            "{json}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn params_malformado_raiz_incorrecta_o_ausente() {
+    let sb = Sandbox::new("params_raiz");
+    sb.put("params.json", "[]");
+    assert_eq!(
+        texts(&sb.errors()),
+        ["params.json: la raíz debe ser un objeto"]
+    );
+    sb.put("params.json", "{");
+    assert!(texts(&sb.errors())[0].starts_with("params.json: JSON malformado"));
+    fs::remove_file(sb.0.join("params.json")).unwrap();
+    assert_eq!(texts(&sb.errors()), ["params.json: falta el archivo"]);
+}
+
+#[test]
+fn los_errores_de_params_se_acumulan_con_los_de_otros_archivos() {
+    let sb = Sandbox::new("params_acumula");
+    sb.put("params.json", "{}");
+    sb.put("bodies.json", fixture("bodies_wrong_type.json"));
+    let errors = texts(&sb.errors());
+    assert!(
+        errors.iter().any(|e| e.starts_with("bodies.json")),
+        "{errors:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|e| e.starts_with("params.json"))
+            .count(),
+        3
+    );
+}
