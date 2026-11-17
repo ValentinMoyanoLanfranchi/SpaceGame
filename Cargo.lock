@@ -228,6 +228,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "heliarca-sim",
+ "jsonschema",
+ "serde_json",
  "thiserror",
 ]
 

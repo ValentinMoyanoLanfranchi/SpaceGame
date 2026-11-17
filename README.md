@@ -57,11 +57,32 @@ La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así q
 `cargo run -p heliarca-cli -- --help` lista los subcomandos y opciones del ejecutable sin interfaz (los argumentos van después de `--`):
 
 - `run`: avanza la simulación N años (todavía no implementado, #41).
-- `validate-data`: valida los datos de `--data-dir` (todavía no implementado, #40).
+- `validate-data`: valida los datos de `--data-dir` (ver [Validar los datos](#validar-los-datos)).
 - Opciones globales: `--seed <u64>` (por defecto `0`) y `--data-dir <ruta>` (por defecto `data`).
 - Sin subcomando imprime un banner con la versión del núcleo y la fecha inicial (`heliarca-cli (sim 0.1.0) - Año 1, día 1, 00:00:00`).
 
 Códigos de salida: `0` éxito (también `--help` y `--version`), `1` error de datos, de simulación o subcomando todavía sin implementar, `2` error de uso (argumento inválido o desconocido).
+
+### Validar los datos
+`cargo run -p heliarca-cli -- validate-data [--data-dir <ruta>]` revisa los archivos de datos (por defecto `data/`) y lista **todos** los errores de una corrida, no sólo el primero. Cada archivo pasa, como mucho, por una de estas fuentes, así que un problema nunca se informa dos veces:
+
+1. **Lectura y sintaxis:** archivo faltante, ilegible, UTF-8 inválido o JSON malformado (`goods.json: JSON malformado en la línea 1, columna 4: ...`). Si un archivo falla acá, no se mira más de él.
+2. **Esquema JSON:** el archivo se valida contra el esquema que genera `heliarca_sim::schema` en memoria (no contra `data/schema/`, que el CI ya garantiza que coincide). El error lleva la ruta JSON dentro del archivo (`bodies.json: /1/radius_km: ...`). Se listan hasta 100 errores por archivo.
+3. **Modelo del cargador:** sólo para archivos que pasaron el esquema; atrapa lo que éste no expresa (p. ej. `bodies.json: body.x: detect_difficulty: ...`).
+4. **Registro de ids y referencias** (formato, duplicados, referencias inexistentes, ciclos de `parent`): sólo si los archivos están sanos, porque con datos incompletos daría falsos «no existe».
+
+Los errores salen por stderr, uno por línea, en el orden de los archivos del cargador; el resumen sale por stdout (`OK: N archivos validados` o `N errores en M archivos`). Códigos de salida: `0` datos válidos, `1` hay errores (o el directorio no existe), `2` error de uso. Ejemplo:
+
+```
+$ cargo run -p heliarca-cli -- validate-data --data-dir mis-datos
+bodies.json: /1/radius_km: "grande" is not of type "number"
+bodies.json: /1: Additional properties are not allowed ('color' was unexpected)
+goods.json: JSON malformado en la línea 1, columna 4: key must be a string
+recipes.json: falta el archivo
+4 errores en 3 archivos
+```
+
+Los mensajes de esquema son los del validador (`jsonschema`, en inglés); los del cargador y del registro, en español.
 
 ### Esquemas JSON de los datos
 Los modelos de `data/` (en `heliarca_sim::data`) derivan `schemars::JsonSchema`, y de ahí sale un esquema JSON (draft 2020-12) por cada archivo de datos, versionado en [`data/schema/`](data/schema/): `data/bodies.json` se valida con `data/schema/bodies.schema.json`, `data/loc/es.json` con `data/schema/loc/es.schema.json`, y así. Sirven para que el editor valide y autocomplete mientras escribís datos (en VS Code, asociá el esquema al archivo con `json.schemas`).
