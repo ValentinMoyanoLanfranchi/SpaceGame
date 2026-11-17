@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+# Edición 2024: estable desde Rust 1.85, por lo que el toolchain fijado (1.100.0) la soporta.
+edition = "2024"
+rust-version = "1.100.0"
+license = "UNLICENSED"
+publish = false

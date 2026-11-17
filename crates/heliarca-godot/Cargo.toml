@@ -1,0 +1,15 @@
+[package]
+name = "heliarca-godot"
+description = "Puente con Godot (extensión cdylib) sobre heliarca-sim."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+heliarca-sim = { path = "../heliarca-sim" }
+# La dependencia de godot (gdext) se agrega en la tarea de integración con Godot, no aquí.
