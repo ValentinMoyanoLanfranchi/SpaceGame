@@ -56,12 +56,35 @@ La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así q
 ### Ejecutar la CLI
 `cargo run -p heliarca-cli -- --help` lista los subcomandos y opciones del ejecutable sin interfaz (los argumentos van después de `--`):
 
-- `run`: avanza la simulación N años (todavía no implementado, #41).
+- `run`: avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real (ver [Correr la simulación](#correr-la-simulación)).
 - `validate-data`: valida los datos de `--data-dir` (ver [Validar los datos](#validar-los-datos)).
 - Opciones globales: `--seed <u64>` (por defecto `0`) y `--data-dir <ruta>` (por defecto `data`).
 - Sin subcomando imprime un banner con la versión del núcleo y la fecha inicial (`heliarca-cli (sim 0.1.0) - Año 1, día 1, 00:00:00`).
 
-Códigos de salida: `0` éxito (también `--help` y `--version`), `1` error de datos, de simulación o subcomando todavía sin implementar, `2` error de uso (argumento inválido o desconocido).
+Códigos de salida: `0` éxito (también `--help` y `--version`), `1` error de datos o de simulación, `2` error de uso (argumento inválido o desconocido).
+
+### Correr la simulación
+`cargo run -p heliarca-cli -- run --years 40 --seed 1` carga `--data-dir` (por defecto `data/`), avanza 40 años y resume la corrida:
+
+```
+Años simulados: 40
+Semilla: 1
+Incremento: d1
+Pasos: 14600
+Fecha final: Año 41, día 1, 00:00:00
+Eventos: 0
+Hash de estado: 20be5da18cee18825dbc5e2a0ab3e06c
+Duración real: 0,002 s
+```
+
+Opciones de `run` (además de `--seed` y `--data-dir`):
+
+- `--years <N>`: años a simular, de 0 a 10000 (por defecto `40`, el horizonte del criterio de rendimiento). Un año son 365 días, el del calendario que muestra la fecha (ver el issue #439 sobre `days_per_year`). `--years 0` es válido: 0 pasos. Fuera de rango es un error de uso (código 2).
+- `--increment <s5|h1|d1|d5|d30>`: incremento de cada paso (por defecto `d1`). Si lo que falta es menos que el incremento, el último tramo se completa con incrementos menores (D30, D5, D1, H1, S5), así que nunca se pasa del total. Si el núcleo interrumpe un avance, la CLI sigue desde donde quedó; si un avance no progresa nada, corta con error (código 1) en vez de quedarse girando.
+
+Los datos se cargan con la misma política completa que `validate-data` (archivos más registro de ids y referencias); si fallan, los errores salen por stderr, uno por línea, con código 1. Las líneas de la salida son estables y parseables (`Clave: valor`); todas salvo `Duración real` son deterministas: misma semilla, años e incremento dan el mismo hash. El hash incluye el estado interno (semilla/RNG, pasos), así que cambiar el incremento puede cambiar el hash aunque la fecha final sea la misma.
+
+**Duración real y línea base de rendimiento.** Es el tiempo de pared del bucle de avance (sin la carga de datos), con tres decimales y coma decimal (`0,002 s`). Se mide sólo en la CLI (`crates/heliarca-cli/src/timing.rs`) y no entra a la simulación ni al hash. Es la línea base para el criterio «40 años de juego en menos de 30 s» (doc 21 §1). Con el escenario actual (vacío, sin sistemas), 40 años a `d1` tardan en una máquina de desarrollo con Windows 11: 0,002 s en debug (`cargo run -p heliarca-cli -- run --years 40 --seed 1`) y menos de 1 ms en release (`cargo run --release -p heliarca-cli -- run --years 40 --seed 1`); a `s5` (252 millones de pasos en 40 años) tarda unos 3,9 s en release. Son números de referencia que irán subiendo cuando existan los sistemas; el presupuesto se vigila contra el criterio de 30 s, no contra estos valores.
 
 ### Validar los datos
 `cargo run -p heliarca-cli -- validate-data [--data-dir <ruta>]` revisa los archivos de datos (por defecto `data/`) y lista **todos** los errores de una corrida, no sólo el primero. Cada archivo pasa, como mucho, por una de estas fuentes, así que un problema nunca se informa dos veces:

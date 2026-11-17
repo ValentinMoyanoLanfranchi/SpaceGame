@@ -49,11 +49,153 @@ fn los_errores_de_uso_salen_con_2() {
     }
 }
 
+// ---- run ----
+
+/// Corre `run` sobre el `data/` real con los argumentos dados.
+fn run_real(args: &[&str]) -> Output {
+    let data = real_data();
+    let mut all = vec!["run", "--data-dir", data.to_str().unwrap()];
+    all.extend_from_slice(args);
+    cli(&all)
+}
+
+/// Valor de la línea `<clave>: <valor>` de la salida.
+fn field<'a>(out: &'a str, key: &str) -> &'a str {
+    out.lines()
+        .find_map(|line| line.strip_prefix(key).and_then(|r| r.strip_prefix(": ")))
+        .unwrap_or_else(|| panic!("falta la línea «{key}»: {out}"))
+}
+
+/// La salida sin la línea de duración real (lo único no determinista).
+fn without_duration(out: &str) -> String {
+    out.lines()
+        .filter(|line| !line.starts_with("Duración real: "))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
+fn is_hash(text: &str) -> bool {
+    text.len() == 32 && text.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 #[test]
-fn run_sin_implementar_sale_con_1() {
-    let output = cli(&["run"]);
+fn run_40_anos_termina_y_muestra_el_hash() {
+    let output = run_real(&["--years", "40", "--seed", "1"]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    let out = text(&output.stdout);
+    assert_eq!(field(&out, "Fecha final"), "Año 41, día 1, 00:00:00");
+    assert_eq!(field(&out, "Eventos"), "0");
+    assert_eq!(field(&out, "Pasos"), "14600");
+    assert!(is_hash(field(&out, "Hash de estado")), "{out}");
+}
+
+#[test]
+fn run_muestra_la_duracion_real_con_formato_numerico() {
+    let out = text(&run_real(&["--years", "1"]).stdout);
+    let value = field(&out, "Duración real")
+        .strip_suffix(" s")
+        .expect("termina en « s»");
+    let (secs, millis) = value.split_once(',').expect("coma decimal");
+    assert!(secs.parse::<u64>().is_ok() && millis.len() == 3, "{value}");
+    assert!(millis.parse::<u16>().is_ok(), "{value}");
+}
+
+#[test]
+fn run_es_determinista_y_depende_de_semilla_y_anos() {
+    let base = text(&run_real(&["--years", "2", "--seed", "7"]).stdout);
+    let again = text(&run_real(&["--years", "2", "--seed", "7"]).stdout);
+    assert_eq!(without_duration(&base), without_duration(&again));
+    let other_seed = text(&run_real(&["--years", "2", "--seed", "8"]).stdout);
+    assert_ne!(
+        field(&base, "Hash de estado"),
+        field(&other_seed, "Hash de estado")
+    );
+    let other_years = text(&run_real(&["--years", "3", "--seed", "7"]).stdout);
+    assert_ne!(
+        field(&base, "Hash de estado"),
+        field(&other_years, "Hash de estado")
+    );
+}
+
+#[test]
+fn run_con_distintos_incrementos_llega_a_la_misma_fecha() {
+    // 3 años = 1095 días: múltiplo de D1/D5 pero no de D30 (el último tramo se achica).
+    let mut dates = Vec::new();
+    // (S5 haría 19 millones de pasos para 3 años: queda fuera por tiempo.)
+    for increment in ["h1", "d1", "d5", "d30"] {
+        let output = run_real(&["--years", "3", "--increment", increment]);
+        assert_eq!(output.status.code(), Some(0), "{increment}");
+        let out = text(&output.stdout);
+        assert_eq!(field(&out, "Incremento"), increment);
+        dates.push(field(&out, "Fecha final").to_owned());
+    }
+    assert!(
+        dates.iter().all(|d| d == "Año 4, día 1, 00:00:00"),
+        "{dates:?}"
+    );
+}
+
+#[test]
+fn run_con_anos_0_es_valido_y_no_da_pasos() {
+    let output = run_real(&["--years", "0"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = text(&output.stdout);
+    assert_eq!(field(&out, "Pasos"), "0");
+    assert_eq!(field(&out, "Fecha final"), "Año 1, día 1, 00:00:00");
+}
+
+#[test]
+fn run_acepta_la_semilla_maxima() {
+    let output = run_real(&["--years", "1", "--seed", "18446744073709551615"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        field(&text(&output.stdout), "Semilla"),
+        u64::MAX.to_string()
+    );
+}
+
+#[test]
+fn run_rechaza_anos_enormes_y_incrementos_invalidos_con_2() {
+    for args in [
+        &["--years", "4294967295"][..],
+        &["--years", "10001"],
+        &["--years", "-1"],
+        &["--increment", "d2"],
+    ] {
+        let output = run_real(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert!(!output.stderr.is_empty(), "{args:?}");
+    }
+}
+
+#[test]
+fn run_con_directorio_inexistente_sale_con_1_y_dice_por_que() {
+    let output = cli(&["run", "--years", "1", "--data-dir", "no/existe/nunca"]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(text(&output.stderr).contains("no está implementado"));
+    assert_eq!(text(&output.stdout), "");
+    assert!(
+        text(&output.stderr).contains("el directorio de datos no existe"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[test]
+fn run_con_datos_rotos_sale_con_1_con_los_errores_del_cargador() {
+    let dir = fixture("run-roto");
+    fs::write(dir.join("goods.json"), "{ no es json").unwrap();
+    let output = cli(&["run", "--years", "1", "--data-dir", dir.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(text(&output.stdout), "");
+    assert!(
+        text(&output.stderr).contains("goods.json"),
+        "{}",
+        text(&output.stderr)
+    );
 }
 
 // ---- validate-data ----
