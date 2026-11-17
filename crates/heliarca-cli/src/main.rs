@@ -1,11 +1,14 @@
 //! Ejecutor sin interfaz de Heliarca.
 //!
 //! Sólo usa la API pública de `heliarca-sim` (`Sim`, `Scenario`...). Este archivo es el esqueleto
-//! de la CLI (#39): argumentos, subcomandos y códigos de salida. La lógica de `run` (#41) y de
-//! `validate-data` (#40) llega en sus tareas; hasta entonces son stubs con un error claro.
+//! de la CLI (#39): argumentos, subcomandos y códigos de salida. `validate-data` (#40) vive en
+//! [`validate`]; la lógica de `run` (#41) llega en su tarea y hasta entonces es un stub con un
+//! error claro.
 //!
 //! Códigos de salida: `0` éxito (incluye `--help` y `--version`), `1` error de datos, de
 //! simulación o funcionalidad todavía no implementada, `2` error de uso (argumentos inválidos).
+
+mod validate;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -48,7 +51,7 @@ enum Command {
         #[arg(long, value_name = "N")]
         years: Option<u32>,
     },
-    /// Valida los archivos de datos de `--data-dir` (pendiente: #40).
+    /// Valida los archivos de datos de `--data-dir` e imprime todos los errores (código 1 si hay).
     ValidateData,
 }
 
@@ -61,6 +64,9 @@ enum CliError {
     /// Subcomando reconocido pero sin lógica todavía.
     #[error("`{command}` no está implementado todavía (ver #{issue})")]
     NotImplemented { command: &'static str, issue: u32 },
+    /// `validate-data` encontró errores en los datos (se imprimen uno por línea).
+    #[error("{}", .0.summary())]
+    InvalidData(validate::Report),
 }
 
 impl CliError {
@@ -69,7 +75,7 @@ impl CliError {
         match self {
             // clap: 0 para ayuda/versión, 2 para errores de uso.
             Self::Usage(error) => u8::try_from(error.exit_code()).unwrap_or(2),
-            Self::NotImplemented { .. } => 1,
+            Self::NotImplemented { .. } | Self::InvalidData(_) => 1,
         }
     }
 }
@@ -100,10 +106,15 @@ where
             command: "run",
             issue: 41,
         }),
-        Some(Command::ValidateData) => Err(CliError::NotImplemented {
-            command: "validate-data",
-            issue: 40,
-        }),
+        Some(Command::ValidateData) => {
+            let report = validate::validate(&cli.data_dir);
+            if report.errors.is_empty() {
+                let _ = writeln!(out, "{}", report.summary());
+                Ok(())
+            } else {
+                Err(CliError::InvalidData(report))
+            }
+        }
     }
 }
 
@@ -118,11 +129,22 @@ where
         Err(error) => {
             let code = error.exit_code();
             // La ayuda y la versión van a stdout; el resto a stderr.
-            let target = if code == 0 { out } else { err };
-            let _ = match &error {
-                CliError::Usage(usage) => write!(target, "{}", usage.render()),
-                CliError::NotImplemented { .. } => writeln!(target, "error: {error}"),
-            };
+            match &error {
+                CliError::Usage(usage) => {
+                    let target = if code == 0 { out } else { err };
+                    let _ = write!(target, "{}", usage.render());
+                }
+                CliError::NotImplemented { .. } => {
+                    let _ = writeln!(err, "error: {error}");
+                }
+                // Los errores van a stderr, uno por línea; el resumen, a stdout.
+                CliError::InvalidData(report) => {
+                    for line in &report.errors {
+                        let _ = writeln!(err, "{line}");
+                    }
+                    let _ = writeln!(out, "{}", report.summary());
+                }
+            }
             ExitCode::from(code)
         }
     }
@@ -187,13 +209,18 @@ mod tests {
     }
 
     #[test]
-    fn los_stubs_salen_con_1_y_apuntan_al_issue() {
+    fn run_es_un_stub_que_sale_con_1_y_apunta_al_issue() {
         let (code, _, err) = exec(&["h", "run"]);
         assert_eq!(code, ExitCode::from(1));
         assert!(err.contains("#41"));
-        let (code, _, err) = exec(&["h", "validate-data"]);
+    }
+
+    #[test]
+    fn validate_data_con_directorio_inexistente_sale_con_1() {
+        let (code, out, err) = exec(&["h", "validate-data", "--data-dir", "no/existe/nunca"]);
         assert_eq!(code, ExitCode::from(1));
-        assert!(err.contains("#40"));
+        assert!(err.contains("el directorio de datos no existe"), "{err}");
+        assert!(out.contains("1 error"), "{out}");
     }
 
     #[test]

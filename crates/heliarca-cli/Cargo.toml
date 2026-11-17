@@ -12,6 +12,9 @@ heliarca-sim = { path = "../heliarca-sim" }
 # Sin `color` (evita anstream/colorchoice/etc.) ni `suggestions`; sólo lo necesario para ayuda y errores.
 clap = { version = "4.6.8", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 thiserror = { version = "2.0.21", default-features = false }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+# Validador de esquemas JSON en runtime (sólo la CLI; el núcleo y Godot no lo llevan). Sin features de red ni de archivos.
+jsonschema = { version = "0.61.2", default-features = false }
 
 [lints]
 workspace = true
