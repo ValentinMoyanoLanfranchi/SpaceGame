@@ -31,6 +31,9 @@ jobs:
       - name: Verificar pin del toolchain
         run: bash scripts/ci/check-toolchain.sh
 
+      - name: Config de cargo y alias (README)
+        run: bash scripts/ci/check-cargo-config.sh
+
       - name: Detectar workspace de Rust
         id: rust
         run: |
@@ -64,3 +67,9 @@ jobs:
       - name: tests
         if: steps.rust.outputs.present == 'true'
         run: cargo test --workspace
+
+      - name: Alias de cargo (c, t)
+        if: steps.rust.outputs.present == 'true'
+        run: |
+          cargo c
+          cargo t
