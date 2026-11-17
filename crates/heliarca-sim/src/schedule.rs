@@ -18,7 +18,18 @@
 //! avanzar 30 días de una vez ejecuta 30 veces un sistema diario y 1 vez uno mensual, igual que
 //! avanzar un día por vez. El resultado total no depende de cómo se parta el avance.
 //!
-//! [`Cadence::EveryIncrement`] corre exactamente una vez por incremento, con el instante final.
+//! [`Cadence::EveryIncrement`] corre exactamente una vez por avance (por llamada a
+//! [`Sim::advance`](crate::Sim::advance)), con el instante final del avance, que es el
+//! planificado o el de la interrupción si el avance se detuvo antes. Corre **después** de las
+//! demás corridas de ese instante, sea cual sea su prioridad.
+//!
+//! # Avance por tramos
+//!
+//! El planificador no decide cuándo detenerse: avanza hasta el instante que se le pide
+//! ([`Scheduler::advance_to`]) y [`Scheduler::next_boundary`] dice dónde está la próxima
+//! frontera de cadencia. [`Sim::advance`](crate::Sim::advance) usa ambas para partir un
+//! incremento en tramos y mirar, entre tramo y tramo, si algún sistema emitió una
+//! interrupción. Partir el avance no cambia lo que corre: cada frontera se cruza una sola vez.
 //!
 //! # Orden de ejecución
 //!
@@ -29,7 +40,8 @@
 
 use std::fmt;
 
-use crate::time::{Increment, SECONDS_PER_DAY, SECONDS_PER_YEAR, SimTime};
+use crate::events::{EventError, EventId, EventKind, EventLog, Interrupt, Payload};
+use crate::time::{SECONDS_PER_DAY, SECONDS_PER_YEAR, SimTime};
 
 /// Días por semana (convención de cadencias, doc 22 §0).
 pub const DAYS_PER_WEEK: u64 = 7;
@@ -87,22 +99,29 @@ pub struct Priority(pub u16);
 
 /// Contexto de una corrida de [`System::step`].
 ///
-/// Es mínimo a propósito: el estado del mundo se agregará con el `Sim` raíz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StepContext {
+/// Da el instante y la cadencia de la corrida y el registro de eventos, para que el sistema
+/// emita (con [`StepContext::emit`]). El resto del estado del mundo se agregará con el `Sim`
+/// raíz.
+#[derive(Debug)]
+pub struct StepContext<'a> {
     time: SimTime,
     cadence: Cadence,
+    events: &'a mut EventLog,
 }
 
-impl StepContext {
+impl<'a> StepContext<'a> {
     /// Crea un contexto para una corrida en `time` disparada por `cadence`.
     #[must_use]
-    pub const fn new(time: SimTime, cadence: Cadence) -> Self {
-        Self { time, cadence }
+    pub fn new(time: SimTime, cadence: Cadence, events: &'a mut EventLog) -> Self {
+        Self {
+            time,
+            cadence,
+            events,
+        }
     }
 
     /// Instante de la frontera que dispara esta corrida (para
-    /// [`Cadence::EveryIncrement`], el instante al final del incremento).
+    /// [`Cadence::EveryIncrement`], el instante al final del avance).
     #[must_use]
     pub const fn time(&self) -> SimTime {
         self.time
@@ -112,6 +131,22 @@ impl StepContext {
     #[must_use]
     pub const fn cadence(&self) -> Cadence {
         self.cadence
+    }
+
+    /// Emite un evento en el instante de esta corrida. Si `interrupt` no es
+    /// [`Interrupt::None`], el avance en curso se detiene en este instante.
+    ///
+    /// # Errors
+    ///
+    /// El [`EventError`] de [`EventLog::emit`].
+    pub fn emit(
+        &mut self,
+        kind: EventKind,
+        cause: Option<EventId>,
+        interrupt: Interrupt,
+        payload: Payload,
+    ) -> Result<EventId, EventError> {
+        self.events.emit(self.time, kind, cause, interrupt, payload)
     }
 }
 
@@ -129,7 +164,7 @@ pub trait System: fmt::Debug {
     fn cadence(&self) -> Cadence;
 
     /// Ejecuta una corrida.
-    fn step(&mut self, ctx: &mut StepContext);
+    fn step(&mut self, ctx: &mut StepContext<'_>);
 }
 
 /// Errores del planificador.
@@ -137,15 +172,12 @@ pub trait System: fmt::Debug {
 pub enum ScheduleError {
     /// Ya hay un sistema registrado con ese id.
     DuplicateId(SystemId),
-    /// El avance desborda el tiempo representable; no se ejecutó nada.
-    TimeOverflow,
 }
 
 impl fmt::Display for ScheduleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateId(id) => write!(f, "ya hay un sistema registrado con id «{id}»"),
-            Self::TimeOverflow => f.write_str("el avance desborda el tiempo de simulación"),
         }
     }
 }
@@ -206,30 +238,54 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Avanza un incremento y ejecuta las corridas que correspondan (ver la documentación
-    /// del módulo).
-    ///
-    /// # Errors
-    /// [`ScheduleError::TimeOverflow`] si el nuevo instante no es representable; en ese caso
-    /// no cambia el tiempo ni corre ningún sistema.
-    pub fn advance(&mut self, increment: Increment) -> Result<(), ScheduleError> {
-        let from = self.time;
-        let to = from
-            .checked_advance(increment)
-            .ok_or(ScheduleError::TimeOverflow)?;
+    /// Fija el instante sin ejecutar nada (para probar el desborde).
+    #[cfg(test)]
+    pub(crate) fn set_time_for_test(&mut self, time: SimTime) {
+        self.time = time;
+    }
 
-        // Corridas (instante, índice en `systems`). Un incremento dura a lo sumo 30 días,
-        // así que son pocas. `k * P <= to` porque `k <= to / P`: no desborda.
+    /// Próxima frontera de cadencia estrictamente posterior a `after`, o `limit` si llega antes
+    /// (o si no hay sistemas periódicos). Si `limit <= after`, devuelve `limit`.
+    ///
+    /// Los sistemas [`Cadence::EveryIncrement`] no tienen fronteras propias.
+    #[must_use]
+    pub fn next_boundary(&self, after: SimTime, limit: SimTime) -> SimTime {
+        let mut next = limit;
+        for period in self
+            .systems
+            .iter()
+            .filter_map(|s| s.cadence().period_seconds())
+        {
+            // `None` sólo cerca de `u64::MAX`: esa frontera no es representable, no cuenta.
+            let boundary = (after.as_seconds() / period + 1).checked_mul(period);
+            if let Some(boundary) = boundary {
+                next = next.min(SimTime::from_seconds(boundary));
+            }
+        }
+        next
+    }
+
+    /// Avanza el tiempo hasta `to` y ejecuta las corridas periódicas de las fronteras cruzadas
+    /// (ver la documentación del módulo). Si `to` no es posterior al instante actual, no hace
+    /// nada: el tiempo nunca retrocede.
+    ///
+    /// Los sistemas [`Cadence::EveryIncrement`] no corren aquí sino en
+    /// [`Scheduler::run_every_increment`].
+    pub fn advance_to(&mut self, to: SimTime, events: &mut EventLog) {
+        let from = self.time;
+        if to <= from {
+            return;
+        }
+
+        // Corridas (instante, índice en `systems`). `k * P <= to` porque `k <= to / P`: no
+        // desborda.
         let mut runs: Vec<(SimTime, usize)> = Vec::new();
         for (index, system) in self.systems.iter().enumerate() {
-            match system.cadence().period_seconds() {
-                None => runs.push((to, index)),
-                Some(period) => {
-                    let first = from.as_seconds() / period + 1;
-                    let last = to.as_seconds() / period;
-                    for k in first..=last {
-                        runs.push((SimTime::from_seconds(k * period), index));
-                    }
+            if let Some(period) = system.cadence().period_seconds() {
+                let first = from.as_seconds() / period + 1;
+                let last = to.as_seconds() / period;
+                for k in first..=last {
+                    runs.push((SimTime::from_seconds(k * period), index));
                 }
             }
         }
@@ -239,16 +295,28 @@ impl Scheduler {
         self.time = to;
         for (time, index) in runs {
             let system = &mut self.systems[index];
-            let mut ctx = StepContext::new(time, system.cadence());
+            let mut ctx = StepContext::new(time, system.cadence(), events);
             system.step(&mut ctx);
         }
-        Ok(())
+    }
+
+    /// Ejecuta una vez cada sistema [`Cadence::EveryIncrement`], con el instante actual, en
+    /// orden (prioridad, id). Se llama al final de un avance.
+    pub fn run_every_increment(&mut self, events: &mut EventLog) {
+        let time = self.time;
+        for system in &mut self.systems {
+            if system.cadence() == Cadence::EveryIncrement {
+                let mut ctx = StepContext::new(time, Cadence::EveryIncrement, events);
+                system.step(&mut ctx);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::Increment;
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
@@ -270,7 +338,7 @@ mod tests {
         fn cadence(&self) -> Cadence {
             self.cadence
         }
-        fn step(&mut self, _ctx: &mut StepContext) {
+        fn step(&mut self, _ctx: &mut StepContext<'_>) {
             self.runs.set(self.runs.get() + 1);
         }
     }
@@ -295,7 +363,7 @@ mod tests {
         fn cadence(&self) -> Cadence {
             self.cadence
         }
-        fn step(&mut self, ctx: &mut StepContext) {
+        fn step(&mut self, ctx: &mut StepContext<'_>) {
             self.log
                 .borrow_mut()
                 .push((ctx.time().as_seconds(), self.id));
@@ -348,9 +416,17 @@ mod tests {
         ]
     }
 
+    /// Avanza un incremento completo, como un `Sim::advance` sin interrupciones.
+    fn advance(sched: &mut Scheduler, increment: Increment) {
+        let to = sched.time().checked_advance(increment).unwrap();
+        let mut events = EventLog::new();
+        sched.advance_to(to, &mut events);
+        sched.run_every_increment(&mut events);
+    }
+
     fn advance_n(sched: &mut Scheduler, increment: Increment, n: u32) {
         for _ in 0..n {
-            sched.advance(increment).unwrap();
+            advance(sched, increment);
         }
     }
 
@@ -400,7 +476,7 @@ mod tests {
         let (mut sched, cells) = all_counters();
         advance_n(&mut sched, Increment::D1, 29);
         assert_eq!(cells[3].get(), 0);
-        sched.advance(Increment::D1).unwrap();
+        advance(&mut sched, Increment::D1);
         assert_eq!(cells[3].get(), 1);
     }
 
@@ -430,7 +506,7 @@ mod tests {
     fn cada_incremento_corre_una_vez_por_incremento() {
         let (mut sched, cells) = all_counters();
         advance_n(&mut sched, Increment::S5, 3);
-        sched.advance(Increment::D30).unwrap();
+        advance(&mut sched, Increment::D30);
         assert_eq!(cells[0].get(), 4);
     }
 
@@ -446,7 +522,7 @@ mod tests {
                 log: Rc::clone(&log),
             }))
             .unwrap();
-        sched.advance(Increment::D5).unwrap();
+        advance(&mut sched, Increment::D5);
         let times: Vec<u64> = log.borrow().iter().map(|e| e.0).collect();
         let expected: Vec<u64> = (1..=5).map(|d| d * SECONDS_PER_DAY).collect();
         assert_eq!(times, expected);
@@ -457,7 +533,7 @@ mod tests {
         let (mut sched, cells) = all_counters();
         advance_n(&mut sched, Increment::H1, 23);
         assert_eq!(counts(&cells), [23, 0, 0, 0, 0]);
-        sched.advance(Increment::H1).unwrap();
+        advance(&mut sched, Increment::H1);
         assert_eq!(counts(&cells), [24, 1, 0, 0, 0]);
     }
 
@@ -511,7 +587,7 @@ mod tests {
                 }))
                 .unwrap();
         }
-        sched.advance(Increment::D1).unwrap();
+        advance(&mut sched, Increment::D1);
         let ids: Vec<&str> = log.borrow().iter().map(|e| e.1).collect();
         assert_eq!(ids, ["d", "b", "a", "c"]);
     }
@@ -530,7 +606,7 @@ mod tests {
                 }))
                 .unwrap();
         }
-        sched.advance(Increment::D30).unwrap();
+        advance(&mut sched, Increment::D30);
         let log = log.borrow();
         assert_eq!(log.len(), 31);
         // Los días 1..=29 primero; el día 30 corre el mensual (prioridad 0) antes que el diario.
@@ -565,26 +641,12 @@ mod tests {
     }
 
     #[test]
-    fn desborde_de_tiempo_es_error_y_no_cambia_nada() {
-        let mut sched = Scheduler::new();
-        let (system, runs) = counter(Cadence::EveryIncrement);
-        sched.register(system).unwrap();
-        sched.time = SimTime::MAX;
-        assert_eq!(
-            sched.advance(Increment::S5),
-            Err(ScheduleError::TimeOverflow)
-        );
-        assert_eq!(sched.time(), SimTime::MAX);
-        assert_eq!(runs.get(), 0);
-    }
-
-    #[test]
     fn cerca_del_maximo_no_desborda_en_las_fronteras() {
         let mut sched = Scheduler::new();
         let (system, runs) = counter(Cadence::Daily);
         sched.register(system).unwrap();
         sched.time = SimTime::from_seconds(u64::MAX - 5);
-        sched.advance(Increment::S5).unwrap();
+        advance(&mut sched, Increment::S5);
         assert_eq!(sched.time(), SimTime::MAX);
         assert_eq!(runs.get(), 0);
     }
@@ -612,7 +674,7 @@ mod tests {
                 state ^= state >> 7;
                 state ^= state << 17;
                 let inc = Increment::ALL[(state % 5) as usize];
-                sched.advance(inc).unwrap();
+                advance(&mut sched, inc);
                 incrementos += 1;
             }
             let t = sched.time().as_seconds();
@@ -623,5 +685,50 @@ mod tests {
             assert_eq!(u64::from(c[3]), t / SECONDS_PER_MONTH);
             assert_eq!(u64::from(c[4]), t / SECONDS_PER_YEAR);
         }
+    }
+
+    #[test]
+    fn la_proxima_frontera_es_la_mas_cercana_o_el_limite() {
+        let mut sched = Scheduler::new();
+        let day = SimTime::from_seconds(SECONDS_PER_DAY);
+        let far = SimTime::from_seconds(30 * SECONDS_PER_DAY);
+        // Sin sistemas periódicos: el límite.
+        assert_eq!(sched.next_boundary(SimTime::ZERO, far), far);
+        sched.register(counter(Cadence::EveryIncrement).0).unwrap();
+        assert_eq!(sched.next_boundary(SimTime::ZERO, far), far);
+        sched.register(counter(Cadence::Weekly).0).unwrap();
+        assert_eq!(
+            sched.next_boundary(SimTime::ZERO, far),
+            SimTime::from_seconds(SECONDS_PER_WEEK)
+        );
+        sched.register(counter(Cadence::Daily).0).unwrap();
+        assert_eq!(sched.next_boundary(SimTime::ZERO, far), day);
+        // Estrictamente posterior: desde una frontera, la siguiente.
+        assert_eq!(
+            sched.next_boundary(day, far),
+            SimTime::from_seconds(2 * SECONDS_PER_DAY)
+        );
+        // El límite gana si está antes.
+        assert_eq!(
+            sched.next_boundary(SimTime::ZERO, SimTime::from_seconds(5)),
+            SimTime::from_seconds(5)
+        );
+        // Cerca del máximo la frontera no es representable: se ignora.
+        assert_eq!(
+            sched.next_boundary(SimTime::MAX, SimTime::MAX),
+            SimTime::MAX
+        );
+    }
+
+    #[test]
+    fn advance_to_no_retrocede_ni_repite() {
+        let (mut sched, cells) = all_counters();
+        let mut events = EventLog::new();
+        sched.advance_to(SimTime::from_seconds(3 * SECONDS_PER_DAY), &mut events);
+        sched.advance_to(SimTime::from_seconds(SECONDS_PER_DAY), &mut events);
+        sched.advance_to(SimTime::from_seconds(3 * SECONDS_PER_DAY), &mut events);
+        assert_eq!(sched.time(), SimTime::from_seconds(3 * SECONDS_PER_DAY));
+        assert_eq!(cells[1].get(), 3);
+        assert_eq!(cells[0].get(), 0, "EveryIncrement no corre en advance_to");
     }
 }
