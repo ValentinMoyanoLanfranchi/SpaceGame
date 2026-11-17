@@ -26,7 +26,7 @@
 //!   el de un `HashMap` (que el crate prohíbe).
 //!
 //! El flujo empieza con una cabecera (`MAGIC` + `FORMAT_VERSION`) y sigue con secciones, cada
-//! una con su tag: núcleo (semilla, estado del RNG, pasos), calendario, planificador (tiempo y
+//! una con su tag: núcleo (semilla y estado del RNG), calendario, planificador (tiempo y
 //! sistemas), eventos, comandos y parámetros globales (`Params`).
 //! Las estructuras se desestructuran **sin `..`** en su módulo (`hash_parts`): agregar un campo
 //! sin decidir si se hashea no compila (lo excluido a propósito lleva un comentario).
@@ -47,8 +47,7 @@
 //! - la **semilla** y el **estado interno del RNG** (no sólo la semilla original: dos `Sim` con
 //!   la misma semilla pero distinto consumo del generador divergirán, y con semillas distintas el
 //!   hash difiere desde el inicio);
-//! - el número de **pasos** ([`Sim::steps`](crate::Sim::steps)) y el **calendario** (fecha de
-//!   inicio);
+//! - el **calendario** (fecha de inicio);
 //! - el **tiempo** del planificador y los **sistemas registrados** (id, prioridad, cadencia) más
 //!   lo que cada sistema aporte con `System::hash_state`;
 //! - el **log de eventos completo** (id, instante, tipo, causa, interrupción, payload);
@@ -56,8 +55,33 @@
 //!   **historial** (lo mismo, más paso, instante de aplicación y resultado, con el error
 //!   completo) y el contador de ids de comando.
 //!
+//! # Estado frente a contabilidad de llamadas
+//!
+//! El criterio para decidir qué se hashea es: **¿es parte de lo que se simuló o de cómo se le
+//! pidió avanzar?** El hash cubre el **estado simulado** y el **historial de entradas** del
+//! jugador (los comandos), pero **no** la contabilidad de *cómo se partió el avance* en llamadas.
+//! Por eso `steps` ([`Sim::steps`](crate::Sim::steps), cuántas veces se llamó a
+//! [`Sim::advance`](crate::Sim::advance)) **no entra**: avanzar 30 días como 30 × `D1` o como 1 ×
+//! `D30` simula exactamente lo mismo, y los dos `Sim` tienen que tener el mismo hash (es la
+//! propiedad de `tests/properties.rs`, issue #45). `Sim::steps()` sigue siendo un accesor
+//! observable (por ejemplo, para la interfaz o para correlacionar con el historial).
+//!
+//! Lo que **sí** depende de la partición y sigue en el hash, a propósito:
+//!
+//! - `CommandRecord::step` (el índice de la llamada en que se aplicó un comando): es parte del
+//!   **historial de entradas** (los comandos son entradas explícitas del jugador y su momento de
+//!   aplicación es parte de ellas). Dos corridas con los mismos comandos aplicados en llamadas
+//!   distintas son, correctamente, historias distintas. Por eso la propiedad de equivalencia de
+//!   particiones se enuncia **sin comandos**.
+//! - Los sistemas con cadencia [`Cadence::EveryIncrement`] corren **una vez por llamada**: su
+//!   efecto depende de la partición **por diseño** (la cadencia es «por incremento pedido»). La
+//!   propiedad vale para sistemas **periódicos** (diario, semanal, mensual, anual), no para
+//!   `EveryIncrement`.
+//!
 //! # Qué NO entra, y por qué
 //!
+//! - El **contador de pasos** (`Sim::steps`): contabilidad de llamadas, no estado simulado (ver
+//!   arriba). Se desestructura nombrado y descartado en `Sim::state_hash`.
 //! - El **cursor de consumo** de [`Sim::poll_events`](crate::Sim::poll_events): es un detalle de
 //!   la interfaz (cuántos eventos ya se mostraron), no estado simulado; que la UI sondee o no
 //!   no debe cambiar la repetibilidad.
@@ -94,7 +118,10 @@ use crate::schedule::{Cadence, Scheduler};
 use crate::time::Calendar;
 
 /// Versión del formato canónico. Entra al hash; subirla es un cambio incompatible.
-pub const FORMAT_VERSION: u32 = 2;
+///
+/// Historial: 2 = agrega los parámetros globales; 3 = quita `steps` (contabilidad de llamadas,
+/// no estado simulado; #45).
+pub const FORMAT_VERSION: u32 = 3;
 
 /// Marca fija al comienzo del flujo canónico.
 const MAGIC: &str = "heliarca.sim.state";
@@ -453,7 +480,6 @@ pub(crate) fn hash_sim(
     scheduler: &Scheduler,
     events: &EventLog,
     commands: &CommandQueue,
-    steps: u64,
 ) -> StateHash {
     let mut w = StateWriter::new();
     w.write_str(MAGIC);
@@ -463,7 +489,6 @@ pub(crate) fn hash_sim(
     let (seed, rng_state) = rng.hash_parts();
     w.write_u64(seed);
     w.write_u128(rng_state);
-    w.write_u64(steps);
 
     w.write_u8(SECTION_CALENDAR);
     write_calendar(&mut w, calendar);
@@ -603,6 +628,7 @@ mod tests {
         cadence: Cadence,
         rng: Rng,
         last: Option<EventId>,
+        interrupts: bool,
     }
 
     impl System for Noisy {
@@ -617,7 +643,9 @@ mod tests {
         }
         fn step(&mut self, ctx: &mut StepContext<'_>) {
             let roll = self.rng.next_u64();
-            let interrupt = if roll.is_multiple_of(41) {
+            let interrupt = if !self.interrupts {
+                Interrupt::None
+            } else if roll.is_multiple_of(41) {
                 Interrupt::Halt
             } else if roll.is_multiple_of(7) {
                 Interrupt::SlowDown
@@ -642,6 +670,11 @@ mod tests {
     }
 
     fn noisy(sim: &mut Sim, id: &'static str, cadence: Cadence) {
+        noisy_with(sim, id, cadence, true);
+    }
+
+    /// Como [`noisy`]; con `interrupts = false` nunca interrumpe el avance.
+    fn noisy_with(sim: &mut Sim, id: &'static str, cadence: Cadence, interrupts: bool) {
         let rng = sim.rng().derive(id);
         sim.scheduler_mut()
             .register(Box::new(Noisy {
@@ -649,6 +682,7 @@ mod tests {
                 cadence,
                 rng,
                 last: None,
+                interrupts,
             }))
             .unwrap();
     }
@@ -976,6 +1010,66 @@ mod tests {
     }
 
     #[test]
+    fn los_pasos_son_contabilidad_de_llamadas_y_no_entran_al_hash() {
+        // Mismo tiempo simulado, partido en 1 llamada o en 30: `steps` difiere, el hash no.
+        // Sólo sistemas periódicos y sin interrupciones (`EveryIncrement` corre una vez por
+        // llamada, así que depende de la partición por diseño).
+        let periodic = || {
+            let mut sim = Sim::new(Scenario::default(), 6);
+            noisy_with(&mut sim, "test.diario", Cadence::Daily, false);
+            noisy_with(&mut sim, "test.semanal", Cadence::Weekly, false);
+            sim
+        };
+        let (mut a, mut b) = (periodic(), periodic());
+        a.advance(Increment::D30).unwrap();
+        for _ in 0..30 {
+            b.advance(Increment::D1).unwrap();
+        }
+        assert_eq!((a.steps(), b.steps()), (1, 30));
+        assert!(!a.events().is_empty());
+        assert_eq!(a.state_hash(), b.state_hash());
+        // Pero el tiempo simulado sí cuenta: un día más cambia el hash.
+        b.advance(Increment::D1).unwrap();
+        assert_ne!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn los_comandos_y_las_cadencias_por_incremento_dependen_de_la_particion() {
+        // `CommandRecord::step` es parte del historial de entradas: el mismo comando enviado en
+        // el mismo instante pero aplicado en otra llamada es otra historia.
+        let hash = |calls_before: &[Increment]| {
+            let mut sim = Sim::new(Scenario::default(), 6);
+            for &inc in calls_before {
+                sim.advance(inc).unwrap();
+            }
+            sim.submit_command(Box::new(Poke(1))).unwrap();
+            sim.advance(Increment::D1).unwrap();
+            (sim.time(), sim.state_hash())
+        };
+        let ((t_a, h_a), (t_b, h_b)) = (hash(&[Increment::D5]), hash(&[Increment::D1; 5]));
+        assert_eq!(t_a, t_b);
+        assert_ne!(h_a, h_b, "step 1 contra step 5");
+
+        // `EveryIncrement` corre una vez por llamada: 1 × D5 y 5 × D1 no son equivalentes.
+        let por_incremento = |calls: &[Increment]| {
+            let mut sim = Sim::new(Scenario::default(), 6);
+            noisy_with(
+                &mut sim,
+                "test.por_incremento",
+                Cadence::EveryIncrement,
+                false,
+            );
+            for &inc in calls {
+                sim.advance(inc).unwrap();
+            }
+            sim.state_hash()
+        };
+        assert_ne!(
+            por_incremento(&[Increment::D5]),
+            por_incremento(&[Increment::D1; 5])
+        );
+    }
+    #[test]
     fn state_hash_es_idempotente_y_no_muta() {
         let mut sim = new_sim(8);
         sim.submit_command(Box::new(Poke(1))).unwrap();
@@ -1047,9 +1141,9 @@ mod tests {
     /// subí `FORMAT_VERSION`, avisá en el PR que invalida repeticiones y guardados previos y
     /// regenerá el valor: `cargo test -p heliarca-sim golden -- --nocapture` imprime el hash
     /// actual (`GOLDEN actual = ...`); pegá el literal acá.
-    const GOLDEN_HASH: u128 = 0xdd1d_ad6f_259b_f40c_aa0c_8677_9666_3b55;
+    const GOLDEN_HASH: u128 = 0xebda_10a4_ed7c_ea8a_de8a_b83e_31fc_b310;
     /// Hash del `Sim` recién creado con semilla 42 (sin sistemas), mismo uso.
-    const GOLDEN_HASH_INICIAL: u128 = 0x962f_460e_df28_c488_4e68_bd9e_a64d_064c;
+    const GOLDEN_HASH_INICIAL: u128 = 0x3ab2_acd4_02c7_f6c8_9d71_0a48_0529_a287;
 
     fn golden_sim() -> Sim {
         let mut sim = new_sim(42);

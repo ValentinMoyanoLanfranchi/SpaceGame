@@ -21,3 +21,6 @@ workspace = true
 
 [dev-dependencies]
 jsonschema = { version = "0.61.2", default-features = false }
+# Tests de propiedades (CONTRIBUTING.md, «Tests de propiedades»). Sólo `std`: sin `fork`/`timeout`
+# (rusty-fork, tempfile) ni `bit-set`, para un árbol de dependencias mínimo.
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }

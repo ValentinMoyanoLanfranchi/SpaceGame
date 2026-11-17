@@ -176,7 +176,8 @@ pub struct Sim {
     scheduler: Scheduler,
     events: EventLog,
     commands: CommandQueue,
-    /// Avances (llamadas a `advance` que se llevaron a cabo) hasta ahora (clave para reproducir un historial de comandos).
+    /// Avances (llamadas a `advance` que se llevaron a cabo) hasta ahora (clave para reproducir un
+    /// historial de comandos). Contabilidad de llamadas: **no** entra al hash de estado.
     steps: u64,
 }
 
@@ -198,8 +199,11 @@ impl Sim {
         }
     }
 
-    /// Hash estable de 128 bits de **todo el estado simulado**: semilla y estado del RNG, pasos,
-    /// calendario, tiempo y sistemas, log de eventos, cola e historial de comandos.
+    /// Hash estable de 128 bits de **todo el estado simulado**: semilla y estado del RNG,
+    /// calendario, tiempo y sistemas, log de eventos, cola e historial de comandos. **No** incluye
+    /// [`Sim::steps`]: cuántas llamadas a [`Sim::advance`] hicieron falta es contabilidad, no
+    /// estado, así que 30 × `D1` y 1 × `D30` (sin comandos ni sistemas `EveryIncrement`) dan el
+    /// mismo hash.
     ///
     /// Es la base de la repetibilidad: con el mismo escenario y semilla, las mismas operaciones
     /// dan el mismo hash en cada paso, en cualquier plataforma y ejecución. Se calcula sobre una
@@ -244,9 +248,11 @@ impl Sim {
             scheduler,
             events,
             commands,
-            steps,
+            // Contabilidad de llamadas (cómo se partió el avance), no estado simulado: 30 × D1 y
+            // 1 × D30 simulan lo mismo y deben dar el mismo hash (ver `state_hash`).
+            steps: _contabilidad_de_llamadas,
         } = self;
-        hash_sim(rng, calendar, params, scheduler, events, commands, *steps)
+        hash_sim(rng, calendar, params, scheduler, events, commands)
     }
 
     /// Semilla con la que se creó la simulación.
@@ -284,6 +290,9 @@ impl Sim {
 
     /// Avances ejecutados con [`Sim::advance`]: uno por llamada que no devolvió error, aunque
     /// se haya detenido por una interrupción o los tramos internos sean muchos.
+    ///
+    /// Es un accesor observable pero **no** forma parte del hash de estado
+    /// ([`Sim::state_hash`]): cuenta cómo se partió el avance, no qué se simuló.
     #[must_use]
     pub const fn steps(&self) -> u64 {
         self.steps
