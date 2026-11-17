@@ -22,6 +22,9 @@ ignore = []
 # Lista corta para un juego propietario: sólo licencias permisivas.
 allow = [
     "MIT",
+    # MIT sin la obligación de atribución (más permisiva que MIT): decisión del dueño del repo,
+    # necesaria por `borrow-or-share` (jsonschema -> referencing -> fluent-uri) en heliarca-cli.
+    "MIT-0",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
