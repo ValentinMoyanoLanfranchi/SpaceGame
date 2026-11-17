@@ -49,6 +49,9 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
 ## Principios técnicos (doc 21 §2)
 1. Simulación separada del render: `heliarca-sim` no depende de Godot.
 2. Determinista: RNG con semilla, orden estable (`BTreeMap`/`IndexMap`), `f64`, sin tiempo real.
+   - En `heliarca-sim` están prohibidos `HashMap` y `HashSet` (y `RandomState`/`DefaultHasher`): su orden de iteración cambia entre ejecuciones y rompería el determinismo. Usar `BTreeMap`/`BTreeSet`, o `IndexMap`/`IndexSet` (crate `indexmap`, a agregar cuando haga falta).
+   - Se hace cumplir con `clippy::disallowed_types` en `crates/heliarca-sim/clippy.toml`; el CI corre `cargo clippy ... -D warnings` y falla si aparecen, también en tests. `heliarca-cli` y `heliarca-godot` no están alcanzados.
+   - Clippy no mira dependencias: un tipo de otra librería con hasher aleatorio interno no se detecta, hay que revisarlo en code review.
 3. Dirigida por datos: bienes, recetas, techs, diseños, cuerpos y textos en JSON.
 4. El jugador actúa por **comandos**; la UI lee **modelos de vista**, no el estado interno.
 5. IDs tipados y arenas; errores con `Result`; `clippy` y `rustfmt` obligatorios.

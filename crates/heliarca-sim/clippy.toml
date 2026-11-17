@@ -1,0 +1,17 @@
+# Config de clippy de heliarca-sim. Clippy usa el PRIMER clippy.toml hacia arriba desde el
+# crate y no fusiona archivos: este reemplaza al de la raíz, así que repite lo común (msrv y
+# std::time) y suma las colecciones no deterministas. Mantener sincronizado con ../../clippy.toml.
+msrv = "1.100.0"
+
+disallowed-types = [
+    { path = "std::time::SystemTime", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+    { path = "std::time::Instant", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+    { path = "std::collections::HashMap", reason = "orden de iteración no determinista: usar BTreeMap o IndexMap" },
+    { path = "std::collections::HashSet", reason = "orden de iteración no determinista: usar BTreeSet o IndexSet" },
+    { path = "std::hash::RandomState", reason = "semilla aleatoria por proceso: no determinista" },
+    { path = "std::hash::DefaultHasher", reason = "no determinista entre versiones de std: usar un hasher explícito con semilla fija" },
+]
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+    { path = "std::time::Instant::now", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+]
