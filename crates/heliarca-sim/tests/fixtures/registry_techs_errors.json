@@ -1,0 +1,6 @@
+[
+  { "id": "tech.pro_0_1" },
+  { "id": "tech.pro_1_1", "prereqs": ["tech.pro_0_1", "tech.ene_0_1"],
+    "unlocks": { "designs": ["design.snd_1"], "effects": [{ "type": "isp_multiplier", "value": 5 }] } },
+  { "id": "tech.pro_0_1" }
+]
