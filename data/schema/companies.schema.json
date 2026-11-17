@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "Entry": {
+      "additionalProperties": true,
+      "description": "Entrada mínima y extensible de los archivos cuyo esquema aún no está definido: sólo exige `id`\ny conserva el resto de los campos tal cual (en un `BTreeMap`, orden estable).",
+      "properties": {
+        "id": {
+          "description": "Id de texto estable (`good.hierro`, `tech.pro_0_1`...).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "items": {
+    "$ref": "#/$defs/Entry"
+  },
+  "title": "Array_of_Entry",
+  "type": "array"
+}

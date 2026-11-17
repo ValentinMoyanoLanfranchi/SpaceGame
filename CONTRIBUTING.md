@@ -53,6 +53,7 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
    - Se hace cumplir con `clippy::disallowed_types` en `crates/heliarca-sim/clippy.toml`; el CI corre `cargo clippy ... -D warnings` y falla si aparecen, también en tests. `heliarca-cli` y `heliarca-godot` no están alcanzados.
    - Clippy no mira dependencias: un tipo de otra librería con hasher aleatorio interno no se detecta, hay que revisarlo en code review.
 3. Dirigida por datos: bienes, recetas, techs, diseños, cuerpos y textos en JSON.
+   - Los modelos de `heliarca_sim::data` derivan `JsonSchema` y los esquemas viven en `data/schema/`. Si tocás un modelo (o la documentación de sus campos), regenerá los esquemas con `UPDATE_SCHEMAS=1 cargo test -p heliarca-sim --test schemas` y commiteá el resultado: el test `tests/schemas.rs` falla en el CI si quedan desactualizados, y también valida `data/` contra ellos.
 4. El jugador actúa por **comandos**; la UI lee **modelos de vista**, no el estado interno.
 5. IDs tipados y arenas; errores con `Result`; `clippy` y `rustfmt` obligatorios.
 

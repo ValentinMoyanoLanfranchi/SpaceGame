@@ -63,6 +63,17 @@ La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así q
 
 Códigos de salida: `0` éxito (también `--help` y `--version`), `1` error de datos, de simulación o subcomando todavía sin implementar, `2` error de uso (argumento inválido o desconocido).
 
+### Esquemas JSON de los datos
+Los modelos de `data/` (en `heliarca_sim::data`) derivan `schemars::JsonSchema`, y de ahí sale un esquema JSON (draft 2020-12) por cada archivo de datos, versionado en [`data/schema/`](data/schema/): `data/bodies.json` se valida con `data/schema/bodies.schema.json`, `data/loc/es.json` con `data/schema/loc/es.schema.json`, y así. Sirven para que el editor valide y autocomplete mientras escribís datos (en VS Code, asociá el esquema al archivo con `json.schemas`).
+
+Los esquemas **se generan, no se editan a mano**. Si cambiás un modelo (o el comentario de documentación de un campo, que viaja como `description`), regeneralos y commiteá el resultado:
+
+```
+UPDATE_SCHEMAS=1 cargo test -p heliarca-sim --test schemas
+```
+
+Un test (`crates/heliarca-sim/tests/schemas.rs`, parte de `cargo test --workspace`) compara los esquemas versionados con los generados y falla, indicando este mismo comando, si no coinciden; así el CI se pone rojo si un modelo cambia sin regenerar. El mismo test valida cada archivo de `data/` contra su esquema y comprueba que el esquema y el cargador (`DataLoader`) coincidan en qué es válido. La salida es determinista (claves ordenadas, LF y salto de línea final; `.gitattributes` fija `eol=lf` en `data/schema/`). El esquema describe la forma (tipos, campos requeridos y desconocidos); las reglas de ids y referencias cruzadas las valida el registro de ids, no el esquema.
+
 ### Correr los checks del CI en local
 Los scripts de [`scripts/ci/`](scripts/ci/) son los mismos que usa el CI. Necesitan `bash` (en Windows viene con Git for Windows, y se corren desde Git Bash) y se lanzan desde la raíz:
 
