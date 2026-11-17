@@ -1,0 +1,5 @@
+[
+  { "id": "body.luna", "kind": "moon", "radius_km": "grande", "detect_difficulty": 0 },
+  { "id": "body.marte", "kind": "planet", "radius_km": 3390, "detect_difficulty": 2 },
+  { "kind": "planet", "radius_km": 1, "detect_difficulty": 3 }
+]

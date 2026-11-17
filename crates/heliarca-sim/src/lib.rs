@@ -66,9 +66,10 @@
 //! let _ = sim.scheduler;
 //! ```
 //!
-//! La excepción es [`ids`], que sigue siendo un módulo público: los ids tipados
+//! Las excepciones son [`ids`] y [`data`], que siguen siendo módulos públicos: los ids tipados
 //! ([`ids::BodyId`], [`ids::ShipId`]...), su registro de nombres y la macro [`define_id!`] se
-//! usan por esa ruta.
+//! usan por la primera ruta, y el cargador de `data/` ([`data::DataLoader`]) por la segunda
+//! (lo usan la CLI y los tests de integración sin pasar por el estado interno de la simulación).
 
 // Un bloque `unsafe` aquí es un error de compilación (más estricto que `deny`: no admite `#[allow]`).
 #![forbid(unsafe_code)]
@@ -79,6 +80,7 @@
 #[allow(dead_code)]
 mod arena;
 mod command;
+pub mod data;
 mod events;
 pub mod ids;
 #[allow(dead_code)]
