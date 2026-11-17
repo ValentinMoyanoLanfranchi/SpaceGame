@@ -27,6 +27,50 @@ Para compilar el núcleo de simulación necesitás:
 
 Para comprobar que quedó bien, corré `cargo --version` desde la raíz del repo: tiene que informar `1.100.0`.
 
+## Desarrollo local
+Con los [requisitos](#requisitos) instalados, todo se corre desde la raíz del repo. Los comandos son los mismos en Windows (PowerShell) y en Linux.
+
+```
+git clone https://github.com/ValentinMoyanoLanfranchi/SpaceGame.git
+cd SpaceGame
+```
+
+### Compilar, probar y verificar
+| Qué | Comando |
+|---|---|
+| Compilar todo el workspace (como el CI) | `cargo build --workspace --locked` |
+| Tests | `cargo test --workspace` |
+| Lints (clippy, los warnings son error) | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Formato (solo verifica) | `cargo fmt --all -- --check` |
+| Formato (aplica los cambios) | `cargo fmt --all` |
+
+La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así que tarda un poco más. Antes de abrir un PR, los cuatro primeros tienen que pasar en verde (es lo que valida el CI).
+
+### Atajos de cargo
+[`.cargo/config.toml`](.cargo/config.toml) define tres alias, ver [Tiempos de compilación](#tiempos-de-compilación):
+
+- `cargo c`: verificación rápida (`check`) de todo el workspace, sin generar binarios.
+- `cargo t`: los tests de todo el workspace.
+- `cargo l`: el mismo clippy con `-D warnings` que corre el CI.
+
+### Ejecutar la CLI
+`cargo run -p heliarca-cli` compila y corre el ejecutable sin interfaz. Por ahora solo imprime un banner con la versión del núcleo (`heliarca-cli (sim 0.1.0)`); irá creciendo con el MVP.
+
+### Correr los checks del CI en local
+Los scripts de [`scripts/ci/`](scripts/ci/) son los mismos que usa el CI. Necesitan `bash` (en Windows viene con Git for Windows, y se corren desde Git Bash) y se lanzan desde la raíz:
+
+```
+for s in scripts/ci/check-*.sh; do bash "$s"; done
+```
+
+Cada uno imprime `OK: ...` si pasa y sale con error si no. Protegen, entre otras cosas, que `heliarca-sim` no dependa de Godot ni use `unsafe`, que el toolchain esté fijado y que los alias del README existan.
+
+### Auditoría de dependencias
+Con `cargo install --locked cargo-deny` instalado, `cargo deny check` aplica la política de [Dependencias y auditoría](#dependencias-y-auditoría-cargo-deny). Es opcional en local: el CI lo corre igual. Necesita red, porque descarga la base de RustSec.
+
+### Godot
+> **Pendiente:** se completa en M0.7 (instalación de Godot 4, compilación de `heliarca-godot` y cómo abrir el proyecto). Por ahora `cargo build --workspace` compila `heliarca-godot` como un crate común, sin Godot instalado.
+
 ## Cómo se trabaja
 El desarrollo está planificado en **issues de GitHub** con jerarquía `Hito → Épica → Historia → Tarea`. Leé [CONTRIBUTING.md](CONTRIBUTING.md) y el [plan de desarrollo](Documentacion/23_plan_de_desarrollo.md). Todo cambio entra por **Pull Request**; `main` está protegida (ver [SECURITY.md](SECURITY.md)).
 
