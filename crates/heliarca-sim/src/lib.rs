@@ -88,6 +88,7 @@ mod rng;
 mod scenario;
 #[allow(dead_code)]
 mod schedule;
+pub mod schema;
 mod sim;
 mod time;
 

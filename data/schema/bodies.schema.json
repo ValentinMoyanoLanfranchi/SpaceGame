@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "Body": {
+      "additionalProperties": false,
+      "description": "Cuerpo celeste (entrada de `bodies.json`, doc 22 §11).",
+      "properties": {
+        "deposits": {
+          "description": "Yacimientos.",
+          "items": {
+            "$ref": "#/$defs/Deposit"
+          },
+          "type": "array"
+        },
+        "detect_difficulty": {
+          "description": "Dificultad de detección por telescopio (0–10).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "habitability": {
+          "default": null,
+          "description": "Habitabilidad (0–1); ausente si no aplica.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Id de texto (`body.*`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Tipo de cuerpo (`moon`, `planet`...). El doc no fija la lista: es texto libre por ahora.",
+          "type": "string"
+        },
+        "orbit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Orbit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Órbita; ausente para la estrella."
+        },
+        "parent": {
+          "default": null,
+          "description": "Id del cuerpo padre; ausente para la estrella.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "radius_km": {
+          "description": "Radio del cuerpo, en km.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "radius_km",
+        "detect_difficulty"
+      ],
+      "type": "object"
+    },
+    "Deposit": {
+      "additionalProperties": false,
+      "description": "Yacimiento de un cuerpo (`deposits[]` en `bodies.json`).",
+      "properties": {
+        "access": {
+          "description": "Facilidad de acceso (0–1).",
+          "format": "double",
+          "type": "number"
+        },
+        "good": {
+          "description": "Id de texto del bien (`good.*`).",
+          "type": "string"
+        },
+        "reserve_mt": {
+          "description": "Reserva, en megatoneladas.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "good",
+        "reserve_mt",
+        "access"
+      ],
+      "type": "object"
+    },
+    "Orbit": {
+      "additionalProperties": false,
+      "description": "Órbita de un cuerpo (`orbit` en `bodies.json`).",
+      "properties": {
+        "period_days": {
+          "description": "Período, en días.",
+          "format": "double",
+          "type": "number"
+        },
+        "radius_km": {
+          "description": "Radio orbital, en km.",
+          "format": "double",
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/$defs/OrbitKind",
+          "description": "Tipo de órbita (campo `type` en el JSON)."
+        }
+      },
+      "required": [
+        "type",
+        "radius_km",
+        "period_days"
+      ],
+      "type": "object"
+    },
+    "OrbitKind": {
+      "description": "Forma de órbita de un cuerpo. El MVP sólo usa órbitas circulares (doc 22 §0).",
+      "oneOf": [
+        {
+          "const": "circular",
+          "description": "Circular y coplanar (`e = 0`).",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "items": {
+    "$ref": "#/$defs/Body"
+  },
+  "title": "Array_of_Body",
+  "type": "array"
+}
