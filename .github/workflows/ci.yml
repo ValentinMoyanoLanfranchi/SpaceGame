@@ -14,24 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Este job es el "check requerido" de la regla que protege main.
-  # Mientras no exista Cargo.toml (antes de M0.1) pasa sin compilar nada;
-  # cuando existe el workspace, verifica aislamiento de la simulación y lockfile,
-  # y ejecuta fmt + clippy + tests.
-  validate:
-    name: validate
-    runs-on: ubuntu-latest
+  # Compilación y tests en Linux y Windows. Sus checks (`build-test (<os>)`) NO son los
+  # requeridos por el ruleset: lo es `validate`, que los agrega (ver más abajo).
+  # Mientras no exista Cargo.toml (antes de M0.1) pasa sin compilar nada.
+  build-test:
+    name: build-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        # Git Bash en Windows, bash en Linux: los mismos comandos en ambos SO.
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # Los checks por scripts son de texto/repo y no dependen del SO: corren una sola vez
+      # (en Linux) para no volverlos frágiles ante CRLF/rutas de Windows.
       - name: Verificar pin del toolchain
+        if: runner.os == 'Linux'
         run: bash scripts/ci/check-toolchain.sh
 
       - name: Config de cargo y alias (README)
+        if: runner.os == 'Linux'
         run: bash scripts/ci/check-cargo-config.sh
 
       - name: Detectar workspace de Rust
@@ -45,12 +56,21 @@ jobs:
           echo "No hay Cargo.toml, nada que compilar (aun en fase de documentacion y scaffolding)."
 
       - name: Aislamiento de heliarca-sim (sin Godot)
-        if: steps.rust.outputs.present == 'true'
+        if: steps.rust.outputs.present == 'true' && runner.os == 'Linux'
         run: bash scripts/ci/check-sim-isolation.sh
 
       - name: heliarca-sim sin unsafe
-        if: steps.rust.outputs.present == 'true'
+        if: steps.rust.outputs.present == 'true' && runner.os == 'Linux'
         run: bash scripts/ci/check-sim-no-unsafe.sh
+
+      # rustup ya viene en los runners; esto instala la versión de rust-toolchain.toml
+      # de forma explícita (sin acciones de terceros) en vez de depender de la autoinstalación.
+      - name: Instalar toolchain fijado (rustup)
+        if: steps.rust.outputs.present == 'true'
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
 
       - name: Lockfile al día (build --locked)
         if: steps.rust.outputs.present == 'true'
@@ -73,3 +93,23 @@ jobs:
         run: |
           cargo c
           cargo t
+
+  # Este job es el "check requerido" de la regla que protege main (contexto `validate`).
+  # `if: always()` lo hace correr aunque la matriz falle, y entonces hay que exigir
+  # `success` explícitamente: failure, cancelled y skipped cuentan como fallo.
+  validate:
+    name: validate
+    needs: [build-test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exigir que toda la matriz haya terminado en success
+        env:
+          RESULTADO: ${{ needs.build-test.result }}
+        run: |
+          echo "build-test: $RESULTADO"
+          if [ "$RESULTADO" != "success" ]; then
+            echo "::error::La matriz build-test no terminó en success (resultado: $RESULTADO)."
+            exit 1
+          fi
