@@ -27,6 +27,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verificar pin del toolchain
+        run: bash scripts/ci/check-toolchain.sh
+
       - name: Detectar workspace de Rust
         id: rust
         run: |
