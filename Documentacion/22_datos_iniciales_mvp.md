@@ -368,6 +368,7 @@ data/
   scenario_earth.json  # estado inicial de la Tierra, grupos, presupuesto
   events.json          # eventos sociales simples
   loc/es.json          # textos
+  params.json          # parámetros globales (días por semana, mes y año; §0)
 ```
 
 Ejemplo (cuerpo):

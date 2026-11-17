@@ -438,6 +438,7 @@ impl Registry {
             _,
             f_events,
             _,
+            _,
         ] = DATA_FILES;
         let mut errors = Vec::new();
         let registry = Self {

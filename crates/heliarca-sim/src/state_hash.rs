@@ -27,7 +27,9 @@
 //!
 //! El flujo empieza con una cabecera (`MAGIC` + `FORMAT_VERSION`) y sigue con secciones, cada
 //! una con su tag: núcleo (semilla, estado del RNG, pasos), calendario, planificador (tiempo y
-//! sistemas), eventos y comandos.
+//! sistemas), eventos, comandos y parámetros globales (`Params`).
+//! Las estructuras se desestructuran **sin `..`** en su módulo (`hash_parts`): agregar un campo
+//! sin decidir si se hashea no compila (lo excluido a propósito lleva un comentario).
 //!
 //! # Algoritmo de hash: FNV-1a de 128 bits
 //!
@@ -83,15 +85,16 @@
 
 use std::fmt;
 
-use crate::command::{CommandError, CommandOutcome, CommandQueue};
+use crate::command::{CommandError, CommandOutcome, CommandQueue, CommandRecord, Queued};
 use crate::events::{Event, EventError, EventKind, EventLog, Interrupt, Payload, Value};
 use crate::ids::EntityId;
+use crate::params::Params;
 use crate::rng::Rng;
 use crate::schedule::{Cadence, Scheduler};
 use crate::time::Calendar;
 
 /// Versión del formato canónico. Entra al hash; subirla es un cambio incompatible.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Marca fija al comienzo del flujo canónico.
 const MAGIC: &str = "heliarca.sim.state";
@@ -107,6 +110,7 @@ const SECTION_CALENDAR: u8 = 2;
 const SECTION_SCHEDULER: u8 = 3;
 const SECTION_EVENTS: u8 = 4;
 const SECTION_COMMANDS: u8 = 5;
+const SECTION_PARAMS: u8 = 6;
 
 /// Hash de 128 bits del estado de una simulación (ver el módulo `state_hash`).
 ///
@@ -293,12 +297,21 @@ fn write_payload(w: &mut StateWriter, payload: &Payload) {
 }
 
 fn write_event(w: &mut StateWriter, event: &Event) {
-    w.write_u32(event.id.raw());
-    w.write_u64(event.time.as_seconds());
-    write_kind(w, event.kind);
-    w.write_option(event.cause, |w, cause| w.write_u32(cause.raw()));
-    write_interrupt(w, event.interrupt);
-    write_payload(w, &event.payload);
+    // Sin `..`: un campo nuevo de `Event` obliga a decidir si se hashea.
+    let Event {
+        id,
+        time,
+        kind,
+        cause,
+        interrupt,
+        payload,
+    } = event;
+    w.write_u32(id.raw());
+    w.write_u64(time.as_seconds());
+    write_kind(w, *kind);
+    w.write_option(*cause, |w, cause| w.write_u32(cause.raw()));
+    write_interrupt(w, *interrupt);
+    write_payload(w, payload);
 }
 
 fn write_event_error(w: &mut StateWriter, error: &EventError) {
@@ -353,8 +366,8 @@ fn write_outcome(w: &mut StateWriter, outcome: &CommandOutcome) {
     }
 }
 
-fn write_calendar(w: &mut StateWriter, calendar: Calendar) {
-    let start = calendar.start();
+fn write_calendar(w: &mut StateWriter, calendar: &Calendar) {
+    let start = calendar.hash_parts();
     w.write_u64(start.year);
     w.write_u16(start.day);
     w.write_u8(start.hour);
@@ -362,9 +375,15 @@ fn write_calendar(w: &mut StateWriter, calendar: Calendar) {
     w.write_u8(start.second);
 }
 
+fn write_params(w: &mut StateWriter, params: &Params) {
+    for days in params.hash_parts() {
+        w.write_u64(days);
+    }
+}
+
 fn write_scheduler(w: &mut StateWriter, scheduler: &Scheduler) {
-    w.write_u64(scheduler.time().as_seconds());
-    let systems = scheduler.systems();
+    let (time, systems) = scheduler.hash_parts();
+    w.write_u64(time.as_seconds());
     w.write_len(systems.len());
     for system in systems {
         w.write_str(system.id().0);
@@ -379,6 +398,7 @@ fn write_scheduler(w: &mut StateWriter, scheduler: &Scheduler) {
 }
 
 fn write_events(w: &mut StateWriter, events: &EventLog) {
+    let events = events.hash_parts();
     w.write_len(events.len());
     for event in events {
         write_event(w, event);
@@ -386,31 +406,50 @@ fn write_events(w: &mut StateWriter, events: &EventLog) {
 }
 
 fn write_commands(w: &mut StateWriter, commands: &CommandQueue) {
-    w.write_u32(commands.next_id());
-    w.write_len(commands.pending_len());
-    for queued in commands.pending() {
-        w.write_u32(queued.id.raw());
-        w.write_str(queued.kind);
-        write_payload(w, &queued.args);
-        w.write_u64(queued.submitted_at.as_seconds());
+    let (next_id, pending, history) = commands.hash_parts();
+    w.write_u32(next_id);
+    w.write_len(pending.len());
+    for queued in pending {
+        // Sin `..`. `command` se excluye a propósito: por contrato (`Command::args`) `kind` y
+        // `args` bastan para reconstruirlo.
+        let Queued {
+            id,
+            kind,
+            args,
+            submitted_at,
+            command: _reconstruible_desde_kind_y_args,
+        } = queued;
+        w.write_u32(id.raw());
+        w.write_str(kind);
+        write_payload(w, args);
+        w.write_u64(submitted_at.as_seconds());
     }
-    let history = commands.history();
     w.write_len(history.len());
     for record in history {
-        w.write_u32(record.id.raw());
-        w.write_str(record.kind);
-        write_payload(w, &record.args);
-        w.write_u64(record.submitted_at.as_seconds());
-        w.write_u64(record.step);
-        w.write_u64(record.applied_at.as_seconds());
-        write_outcome(w, &record.outcome);
+        let CommandRecord {
+            id,
+            kind,
+            args,
+            submitted_at,
+            step,
+            applied_at,
+            outcome,
+        } = record;
+        w.write_u32(id.raw());
+        w.write_str(kind);
+        write_payload(w, args);
+        w.write_u64(submitted_at.as_seconds());
+        w.write_u64(*step);
+        w.write_u64(applied_at.as_seconds());
+        write_outcome(w, outcome);
     }
 }
 
 /// Calcula el hash del estado a partir de las partes de un [`Sim`](crate::Sim).
 pub(crate) fn hash_sim(
     rng: &Rng,
-    calendar: Calendar,
+    calendar: &Calendar,
+    params: &Params,
     scheduler: &Scheduler,
     events: &EventLog,
     commands: &CommandQueue,
@@ -421,8 +460,9 @@ pub(crate) fn hash_sim(
     w.write_u32(FORMAT_VERSION);
 
     w.write_u8(SECTION_CORE);
-    w.write_u64(rng.seed());
-    w.write_u128(rng.state());
+    let (seed, rng_state) = rng.hash_parts();
+    w.write_u64(seed);
+    w.write_u128(rng_state);
     w.write_u64(steps);
 
     w.write_u8(SECTION_CALENDAR);
@@ -436,6 +476,9 @@ pub(crate) fn hash_sim(
 
     w.write_u8(SECTION_COMMANDS);
     write_commands(&mut w, commands);
+
+    w.write_u8(SECTION_PARAMS);
+    write_params(&mut w, params);
 
     w.finish()
 }
@@ -611,7 +654,11 @@ mod tests {
     }
 
     fn new_sim(seed: u64) -> Sim {
-        let mut sim = Sim::new(Scenario::default(), seed);
+        new_sim_with(Scenario::default(), seed)
+    }
+
+    fn new_sim_with(scenario: Scenario, seed: u64) -> Sim {
+        let mut sim = Sim::new(scenario, seed);
         noisy(&mut sim, "test.diario", Cadence::Daily);
         noisy(&mut sim, "test.semanal", Cadence::Weekly);
         noisy(&mut sim, "test.por_incremento", Cadence::EveryIncrement);
@@ -744,6 +791,66 @@ mod tests {
         // Misma semilla del escenario no: acá lo que difiere es el contenido aleatorio.
         let ops = [Op::Advance(Increment::D30), Op::Advance(Increment::D30)];
         assert_ne!(run(1, &ops).last().unwrap(), run(2, &ops).last().unwrap());
+    }
+
+    // ---- Parámetros globales ----
+
+    fn con_params(days_per_month: u64) -> Scenario {
+        Scenario::new().with_params(Params::new(7, days_per_month, 365).unwrap())
+    }
+
+    #[test]
+    fn los_params_entran_al_hash_desde_el_estado_inicial() {
+        let a = Sim::new(con_params(30), 1);
+        let b = Sim::new(con_params(30), 1);
+        let c = Sim::new(con_params(10), 1);
+        assert_eq!(a.state_hash(), b.state_hash());
+        assert_ne!(a.state_hash(), c.state_hash());
+        // Los params por defecto son los del GDD.
+        assert_eq!(
+            a.state_hash(),
+            Sim::new(Scenario::default(), 1).state_hash()
+        );
+        // Cada parámetro cuenta.
+        let p = |w, m, y| {
+            Sim::new(
+                Scenario::new().with_params(Params::new(w, m, y).unwrap()),
+                1,
+            )
+            .state_hash()
+        };
+        assert_ne!(p(7, 30, 365), p(6, 30, 365));
+        assert_ne!(p(7, 30, 365), p(7, 30, 366));
+    }
+
+    #[test]
+    fn params_cargados_de_data_dan_la_misma_secuencia_de_hashes() {
+        let data = crate::data::DataLoader::load_dir(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        )
+        .unwrap();
+        let ops = [
+            Op::Poke(1),
+            Op::Advance(Increment::D30),
+            Op::Advance(Increment::D5),
+            Op::Fails,
+            Op::Advance(Increment::D30),
+        ];
+        let run_with = |scenario: Scenario| {
+            let mut sim = new_sim_with(scenario, 9);
+            let mut hashes = vec![sim.state_hash()];
+            for op in ops {
+                apply_op(&mut sim, op);
+                hashes.push(sim.state_hash());
+            }
+            hashes
+        };
+        let a = run_with(Scenario::from_game_data(&data));
+        assert_eq!(a, run_with(Scenario::from_game_data(&data)));
+        // `data/params.json` = valores del GDD = escenario por defecto.
+        assert_eq!(a, run_with(Scenario::default()));
+        // Con otro parámetro la secuencia difiere (también cambia lo que corre).
+        assert_ne!(a, run_with(con_params(10)));
     }
 
     // ---- Sensibilidad ----
@@ -940,9 +1047,9 @@ mod tests {
     /// subí `FORMAT_VERSION`, avisá en el PR que invalida repeticiones y guardados previos y
     /// regenerá el valor: `cargo test -p heliarca-sim golden -- --nocapture` imprime el hash
     /// actual (`GOLDEN actual = ...`); pegá el literal acá.
-    const GOLDEN_HASH: u128 = 0x3a5a_34d6_06ff_9b66_f490_8715_7a32_5655;
+    const GOLDEN_HASH: u128 = 0xdd1d_ad6f_259b_f40c_aa0c_8677_9666_3b55;
     /// Hash del `Sim` recién creado con semilla 42 (sin sistemas), mismo uso.
-    const GOLDEN_HASH_INICIAL: u128 = 0x7d82_37da_581d_08ff_f036_7e9a_a0c3_6a94;
+    const GOLDEN_HASH_INICIAL: u128 = 0x962f_460e_df28_c488_4e68_bd9e_a64d_064c;
 
     fn golden_sim() -> Sim {
         let mut sim = new_sim(42);

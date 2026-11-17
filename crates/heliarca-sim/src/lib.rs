@@ -11,7 +11,7 @@
 //! | Actuar | [`Sim::submit_command`]: valida y encola un [`Command`]; se aplica en el siguiente avance |
 //! | Avanzar | [`Sim::advance`]`(`[`Increment`]`)`: aplica los comandos, avanza por tramos y se detiene en la primera interrupción; devuelve un [`AdvanceResult`] |
 //! | Leer eventos | [`Sim::poll_events`] (novedades) / [`Sim::events`] (todo el registro) |
-//! | Consultar | [`Sim::time`], [`Sim::date`], [`Sim::seed`], [`Sim::steps`], [`Sim::command_history`]... |
+//! | Consultar | [`Sim::time`], [`Sim::date`], [`Sim::seed`], [`Sim::params`], [`Sim::steps`], [`Sim::command_history`]... |
 //!
 //! ```
 //! use heliarca_sim::{Command, CommandError, Increment, Payload, Scenario, Sim};
@@ -100,6 +100,7 @@ pub mod data;
 mod events;
 pub mod ids;
 mod loc;
+mod params;
 mod registry;
 #[allow(dead_code)]
 mod rng;
@@ -116,6 +117,7 @@ pub use events::{
     CausalChain, Event, EventError, EventId, EventKind, EventLog, Interrupt, Payload, Value,
 };
 pub use loc::{LOC_DOMAINS, Loc, is_valid_key};
+pub use params::{Params, ParamsError};
 pub use scenario::Scenario;
 pub use sim::{AdvanceError, AdvanceResult, Sim};
 pub use state_hash::StateHash;

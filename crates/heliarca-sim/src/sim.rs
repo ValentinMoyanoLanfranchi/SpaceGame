@@ -31,6 +31,7 @@ use crate::command::{
     Command, CommandError, CommandId, CommandOutcome, CommandQueue, CommandRecord,
 };
 use crate::events::{Event, EventId, EventLog, Interrupt};
+use crate::params::Params;
 use crate::rng::Rng;
 use crate::scenario::Scenario;
 use crate::schedule::Scheduler;
@@ -171,6 +172,7 @@ impl AdvanceResult {
 pub struct Sim {
     rng: Rng,
     calendar: Calendar,
+    params: Params,
     scheduler: Scheduler,
     events: EventLog,
     commands: CommandQueue,
@@ -184,10 +186,12 @@ impl Sim {
     /// El mismo escenario con la misma semilla produce siempre la misma simulación.
     #[must_use]
     pub fn new(scenario: Scenario, seed: u64) -> Self {
+        let (calendar, params) = scenario.into_parts();
         Self {
             rng: Rng::from_seed(seed),
-            calendar: scenario.calendar(),
-            scheduler: Scheduler::new(),
+            calendar,
+            params,
+            scheduler: Scheduler::with_params(params),
             events: EventLog::new(),
             commands: CommandQueue::default(),
             steps: 0,
@@ -232,14 +236,17 @@ impl Sim {
     /// ```
     #[must_use]
     pub fn state_hash(&self) -> StateHash {
-        hash_sim(
-            &self.rng,
-            self.calendar,
-            &self.scheduler,
-            &self.events,
-            &self.commands,
-            self.steps,
-        )
+        // Sin `..`: agregar un campo a `Sim` sin decidir si se hashea no compila.
+        let Self {
+            rng,
+            calendar,
+            params,
+            scheduler,
+            events,
+            commands,
+            steps,
+        } = self;
+        hash_sim(rng, calendar, params, scheduler, events, commands, *steps)
     }
 
     /// Semilla con la que se creó la simulación.
@@ -258,6 +265,12 @@ impl Sim {
     #[must_use]
     pub const fn calendar(&self) -> Calendar {
         self.calendar
+    }
+
+    /// Parámetros globales (`data/params.json`) con los que se creó la simulación. Inmutables.
+    #[must_use]
+    pub const fn params(&self) -> &Params {
+        &self.params
     }
 
     /// Fecha de calendario del instante actual.
@@ -1103,5 +1116,68 @@ mod tests {
                 [9, 23, 100].iter().filter(|d| **d * DAY <= t).count()
             );
         }
+    }
+
+    // ---- Parámetros globales (data/params.json) ----
+
+    /// Copia `data/` a un directorio temporal con `params.json` reemplazado y arma el `Sim`.
+    fn sim_con_params_json(caso: &str, params_json: &str) -> Sim {
+        use crate::data::{DATA_FILES, DataLoader};
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let dir =
+            std::env::temp_dir().join(format!("heliarca-sim-params-{}-{caso}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for file in DATA_FILES {
+            let dest = dir.join(file);
+            std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            std::fs::copy(repo.join(file), &dest).unwrap();
+        }
+        std::fs::write(dir.join("params.json"), params_json).unwrap();
+        let data = DataLoader::load_dir(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        Sim::new(Scenario::from_game_data(&data), 1)
+    }
+
+    fn corridas_mensuales(params_json: &str, caso: &str, dias: u64) -> usize {
+        let mut sim = sim_con_params_json(caso, params_json);
+        let runs = add(&mut sim, "mes", 0, Cadence::Monthly, &[]);
+        let mut left = dias;
+        while left > 0 {
+            sim.advance(Increment::D1).unwrap();
+            left -= 1;
+        }
+        count(&runs, "mes")
+    }
+
+    #[test]
+    fn cambiar_params_json_cambia_la_cadencia_sin_recompilar() {
+        let json = |m: u64| {
+            format!(r#"{{"days_per_week": 7, "days_per_month": {m}, "days_per_year": 365}}"#)
+        };
+        assert_eq!(corridas_mensuales(&json(30), "m30", 30), 1);
+        assert_eq!(corridas_mensuales(&json(10), "m10", 30), 3);
+        assert_eq!(corridas_mensuales(&json(10), "m10b", 360), 36);
+    }
+
+    #[test]
+    fn los_params_semanal_y_anual_tambien_salen_de_los_datos() {
+        let mut sim = sim_con_params_json(
+            "sa",
+            r#"{"days_per_week": 2, "days_per_month": 10, "days_per_year": 20}"#,
+        );
+        let sem = add(&mut sim, "sem", 0, Cadence::Weekly, &[]);
+        let anio = add(&mut sim, "anio", 1, Cadence::Yearly, &[]);
+        for _ in 0..40 {
+            sim.advance(Increment::D1).unwrap();
+        }
+        assert_eq!(count(&sem, "sem"), 20);
+        assert_eq!(count(&anio, "anio"), 2);
+        assert_eq!(sim.params().days_per_year(), 20);
+    }
+
+    #[test]
+    fn sin_escenario_de_datos_los_params_son_los_del_gdd() {
+        let sim = sim(1);
+        assert_eq!(*sim.params(), Params::default());
     }
 }
