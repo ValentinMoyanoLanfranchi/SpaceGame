@@ -16,7 +16,8 @@ concurrency:
 jobs:
   # Este job es el "check requerido" de la regla que protege main.
   # Mientras no exista Cargo.toml (antes de M0.1) pasa sin compilar nada;
-  # cuando existe el workspace, ejecuta fmt + clippy + tests.
+  # cuando existe el workspace, verifica aislamiento de la simulación y lockfile,
+  # y ejecuta fmt + clippy + tests.
   validate:
     name: validate
     runs-on: ubuntu-latest
@@ -39,6 +40,14 @@ jobs:
         if: steps.rust.outputs.present != 'true'
         run: |
           echo "No hay Cargo.toml, nada que compilar (aun en fase de documentacion y scaffolding)."
+
+      - name: Aislamiento de heliarca-sim (sin Godot)
+        if: steps.rust.outputs.present == 'true'
+        run: bash scripts/ci/check-sim-isolation.sh
+
+      - name: Lockfile al día (build --locked)
+        if: steps.rust.outputs.present == 'true'
+        run: cargo build --workspace --locked
 
       - name: rustfmt
         if: steps.rust.outputs.present == 'true'
