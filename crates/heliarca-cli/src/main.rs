@@ -2,12 +2,13 @@
 //!
 //! Sólo usa la API pública de `heliarca-sim` (`Sim`, `Scenario`...). Este archivo es el esqueleto
 //! de la CLI (#39): argumentos, subcomandos y códigos de salida. `validate-data` (#40) vive en
-//! [`validate`]; la lógica de `run` (#41) llega en su tarea y hasta entonces es un stub con un
-//! error claro.
+//! [`validate`] y `run` (#41) en [`run`](mod@run); la medición de tiempo real, en [`timing`].
 //!
-//! Códigos de salida: `0` éxito (incluye `--help` y `--version`), `1` error de datos, de
-//! simulación o funcionalidad todavía no implementada, `2` error de uso (argumentos inválidos).
+//! Códigos de salida: `0` éxito (incluye `--help` y `--version`), `1` error de datos o de
+//! simulación, `2` error de uso (argumentos inválidos).
 
+mod run;
+mod timing;
 mod validate;
 
 use std::ffi::OsString;
@@ -45,11 +46,19 @@ struct Cli {
 /// Subcomandos disponibles.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 enum Command {
-    /// Avanza la simulación N años (pendiente: #41).
+    /// Avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real.
     Run {
-        /// Cantidad de años a simular.
-        #[arg(long, value_name = "N")]
-        years: Option<u32>,
+        /// Cantidad de años a simular (0 a 10000; un año son 365 días).
+        #[arg(
+            long,
+            value_name = "N",
+            default_value_t = run::DEFAULT_YEARS,
+            value_parser = clap::value_parser!(u32).range(0..=i64::from(run::MAX_YEARS))
+        )]
+        years: u32,
+        /// Incremento de tiempo de cada paso (con muchos años, los chicos son lentos: `s5` a 10000 años tarda ~16 min).
+        #[arg(long, value_enum, default_value_t = run::IncrementArg::D1)]
+        increment: run::IncrementArg,
     },
     /// Valida los archivos de datos de `--data-dir` e imprime todos los errores (código 1 si hay).
     ValidateData,
@@ -61,9 +70,12 @@ enum CliError {
     /// Argumentos inválidos, `--help` o `--version` (clap decide el código: 2 o 0).
     #[error("{0}")]
     Usage(clap::Error),
-    /// Subcomando reconocido pero sin lógica todavía.
-    #[error("`{command}` no está implementado todavía (ver #{issue})")]
-    NotImplemented { command: &'static str, issue: u32 },
+    /// Los datos de `--data-dir` no cargan o no validan (una línea por error).
+    #[error("{}", .0.join("\n"))]
+    Data(Vec<String>),
+    /// La simulación falló (desborde de tiempo, falta de progreso, fecha fuera de rango).
+    #[error("{0}")]
+    Sim(String),
     /// `validate-data` encontró errores en los datos (se imprimen uno por línea).
     #[error("{}", .0.summary())]
     InvalidData(validate::Report),
@@ -75,7 +87,7 @@ impl CliError {
         match self {
             // clap: 0 para ayuda/versión, 2 para errores de uso.
             Self::Usage(error) => u8::try_from(error.exit_code()).unwrap_or(2),
-            Self::NotImplemented { .. } | Self::InvalidData(_) => 1,
+            Self::Data(_) | Self::Sim(_) | Self::InvalidData(_) => 1,
         }
     }
 }
@@ -102,10 +114,9 @@ where
             let _ = writeln!(out, "{}", banner(cli.seed));
             Ok(())
         }
-        Some(Command::Run { .. }) => Err(CliError::NotImplemented {
-            command: "run",
-            issue: 41,
-        }),
+        Some(Command::Run { years, increment }) => {
+            run::run(&cli.data_dir, cli.seed, years, increment, out)
+        }
         Some(Command::ValidateData) => {
             let report = validate::validate(&cli.data_dir);
             if report.errors.is_empty() {
@@ -134,8 +145,13 @@ where
                     let target = if code == 0 { out } else { err };
                     let _ = write!(target, "{}", usage.render());
                 }
-                CliError::NotImplemented { .. } => {
+                CliError::Sim(_) => {
                     let _ = writeln!(err, "error: {error}");
+                }
+                CliError::Data(lines) => {
+                    for line in lines {
+                        let _ = writeln!(err, "{line}");
+                    }
                 }
                 // Los errores van a stderr, uno por línea; el resumen, a stdout.
                 CliError::InvalidData(report) => {
@@ -209,10 +225,34 @@ mod tests {
     }
 
     #[test]
-    fn run_es_un_stub_que_sale_con_1_y_apunta_al_issue() {
-        let (code, _, err) = exec(&["h", "run"]);
-        assert_eq!(code, ExitCode::from(1));
-        assert!(err.contains("#41"));
+    fn run_parsea_anos_e_incremento_con_sus_valores_por_defecto() {
+        let cli = Cli::try_parse_from(["h", "run"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Command::Run {
+                years: 40,
+                increment: run::IncrementArg::D1
+            })
+        );
+        let cli = Cli::try_parse_from(["h", "run", "--years", "3", "--increment", "d30"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Command::Run {
+                years: 3,
+                increment: run::IncrementArg::D30
+            })
+        );
+    }
+
+    #[test]
+    fn run_rechaza_anos_fuera_de_rango_e_incrementos_invalidos() {
+        for args in [
+            &["h", "run", "--years", "10001"][..],
+            &["h", "run", "--years", "-1"],
+            &["h", "run", "--increment", "x"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
     }
 
     #[test]
