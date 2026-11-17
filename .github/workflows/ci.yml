@@ -45,6 +45,10 @@ jobs:
         if: steps.rust.outputs.present == 'true'
         run: bash scripts/ci/check-sim-isolation.sh
 
+      - name: heliarca-sim sin unsafe
+        if: steps.rust.outputs.present == 'true'
+        run: bash scripts/ci/check-sim-no-unsafe.sh
+
       - name: Lockfile al día (build --locked)
         if: steps.rust.outputs.present == 'true'
         run: cargo build --workspace --locked
