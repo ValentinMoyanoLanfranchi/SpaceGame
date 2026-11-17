@@ -40,6 +40,21 @@
 //! Ver [`Sim`] para el detalle (qué ve un comando durante el paso, qué pasa si un `apply`
 //! entra en pánico, orden de los eventos).
 //!
+//! # Textos para el jugador
+//!
+//! El código sólo maneja claves; el texto sale de `data/loc/es.json` con [`Loc`]. Una clave que
+//! falta se muestra como `¡clave!` (nunca falla):
+//!
+//! ```
+//! use heliarca_sim::{CommandError, Loc};
+//!
+//! let loc = Loc::from_texts(
+//!     [("command.error.ids_exhausted".to_owned(), "Sin órdenes disponibles.".to_owned())].into(),
+//! );
+//! assert_eq!(loc.command_error(&CommandError::IdsExhausted), "Sin órdenes disponibles.");
+//! assert_eq!(loc.get("no.existe"), "¡no.existe!");
+//! ```
+//!
 //! # Qué es interno
 //!
 //! Los módulos de implementación (cola de comandos, planificador, RNG, arenas, registro de
@@ -84,6 +99,7 @@ mod command;
 pub mod data;
 mod events;
 pub mod ids;
+mod loc;
 mod registry;
 #[allow(dead_code)]
 mod rng;
@@ -97,6 +113,7 @@ pub use command::{Command, CommandError, CommandId, CommandOutcome, CommandRecor
 pub use events::{
     CausalChain, Event, EventError, EventId, EventKind, EventLog, Interrupt, Payload, Value,
 };
+pub use loc::{LOC_DOMAINS, Loc, is_valid_key};
 pub use scenario::Scenario;
 pub use sim::{AdvanceError, AdvanceResult, Sim};
 pub use time::{
