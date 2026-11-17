@@ -3,6 +3,8 @@
 // Un bloque `unsafe` aquí es un error de compilación (más estricto que `deny`: no admite `#[allow]`).
 #![forbid(unsafe_code)]
 
+pub mod arena;
+pub mod ids;
 pub mod rng;
 pub mod schedule;
 pub mod time;
