@@ -7,7 +7,7 @@
 //! # Ids de evento
 //!
 //! [`EventId`] se crea con [`define_id!`](crate::define_id) pero **no** pasa por una
-//! [`Arena`](crate::arena::Arena): una arena reutiliza slots (con otra generación) y un log
+//! `Arena` (interna del crate): una arena reutiliza slots (con otra generación) y un log
 //! append-only jamás reutiliza un id, porque la causa de un evento debe seguir apuntando al
 //! mismo hecho para siempre. Los ids son secuenciales desde 0 y el id es el índice en el log.
 //! Con `u32` caben 2^32 eventos; al agotarse, [`EventLog::emit`] devuelve

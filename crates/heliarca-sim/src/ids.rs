@@ -3,8 +3,8 @@
 //! # Dos formas de un mismo id
 //!
 //! - **Forma numérica** (`u32`): un nuevo tipo por entidad ([`BodyId`], [`ShipId`], …) creado con
-//!   [`define_id!`]. Es barata, `Copy` y ordenable. Los ids de entidades dinámicas los entrega una
-//!   [`Arena`](crate::arena::Arena), que empaqueta índice y generación en el `u32`.
+//!   [`define_id!`](crate::define_id). Es barata, `Copy` y ordenable. Los ids de entidades dinámicas los entrega una
+//!   `Arena` (interna del crate), que empaqueta índice y generación en el `u32`.
 //! - **Forma de texto** (`body.luna`): la «clave de datos» estable que viaja en los archivos de
 //!   datos y en los guardados. Tiene el formato `<prefijo>.<nombre>`: el prefijo lo fija el tipo
 //!   ([`EntityId::PREFIX`]) y el nombre es un *slug* validado (ver [`validate_name`]).
@@ -35,7 +35,7 @@ use std::fmt;
 /// Longitud máxima, en bytes, del nombre (la parte posterior al prefijo).
 pub const MAX_NAME_LEN: usize = 64;
 
-/// Comportamiento común de los ids tipados; lo implementa [`define_id!`].
+/// Comportamiento común de los ids tipados; lo implementa [`define_id!`](crate::define_id).
 pub trait EntityId: Copy + Eq + Ord + fmt::Debug {
     /// Prefijo de texto del tipo de entidad (p. ej. `"body"`).
     const PREFIX: &'static str;

@@ -18,17 +18,8 @@
 //!   hashes ni de la historia salvo por qué slot ocupa cada elemento. La reutilización de slots
 //!   es determinista: se reusa primero el último liberado (pila LIFO).
 //!
-//! ```
-//! use heliarca_sim::arena::Arena;
-//! use heliarca_sim::ids::ShipId;
-//!
-//! let mut naves: Arena<ShipId, &str> = Arena::new();
-//! let a = naves.insert("alba").unwrap();
-//! naves.remove(a);
-//! let b = naves.insert("boreal").unwrap(); // reutiliza el slot
-//! assert_eq!(naves.get(a), None); // el id viejo no resuelve al objeto nuevo
-//! assert_eq!(naves.get(b), Some(&"boreal"));
-//! ```
+//! Es un tipo **interno** del crate (no forma parte de la API pública); el ejemplo de reutilización
+//! de slots y generación está en la prueba `ejemplo_de_reutilizacion_de_slots`.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -212,6 +203,16 @@ mod tests {
     use crate::ids::{BodyId, ShipId};
 
     type Ships = Arena<ShipId, &'static str>;
+
+    #[test]
+    fn ejemplo_de_reutilizacion_de_slots() {
+        let mut naves: Arena<ShipId, &str> = Arena::new();
+        let a = naves.insert("alba").unwrap();
+        naves.remove(a);
+        let b = naves.insert("boreal").unwrap(); // reutiliza el slot
+        assert_eq!(naves.get(a), None); // el id viejo no resuelve al objeto nuevo
+        assert_eq!(naves.get(b), Some(&"boreal"));
+    }
 
     #[test]
     fn insertar_obtener_y_contar() {
