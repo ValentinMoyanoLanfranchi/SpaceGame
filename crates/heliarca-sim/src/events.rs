@@ -200,6 +200,17 @@ pub struct EventLog {
 }
 
 impl EventLog {
+    /// Eventos para el hash de estado. Desestructura **sin `..`**: un campo nuevo obliga a decidir
+    /// si se hashea. `cursor` se excluye a propósito: es estado de la interfaz (cuántos eventos
+    /// ya se mostraron), no estado simulado; sondear o no no debe cambiar la repetibilidad.
+    pub(crate) fn hash_parts(&self) -> &[Event] {
+        let Self {
+            events,
+            cursor: _cursor_de_la_interfaz,
+        } = self;
+        events
+    }
+
     /// Log vacío.
     #[must_use]
     pub fn new() -> Self {

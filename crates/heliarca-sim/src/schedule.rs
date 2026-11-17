@@ -43,6 +43,7 @@ use std::fmt;
 
 use crate::events::{EventError, EventId, EventKind, EventLog, Interrupt, Payload};
 use crate::params::Params;
+use crate::state_hash::StateWriter;
 use crate::time::{SECONDS_PER_DAY, SimTime};
 
 /// Días por semana del GDD (doc 22 §0): valor por defecto de `days_per_week` ([`Params`]).
@@ -176,6 +177,15 @@ pub trait System: fmt::Debug {
 
     /// Ejecuta una corrida.
     fn step(&mut self, ctx: &mut StepContext<'_>);
+
+    /// Escribe en `writer` el estado propio del sistema para el hash de estado
+    /// ([`Sim::state_hash`](crate::Sim::state_hash)). Por defecto no escribe nada.
+    ///
+    /// Un sistema con estado que afecte a lo que simula (su RNG, acumuladores, colas...) **debe**
+    /// sobrescribirlo; si no, ese estado queda fuera del hash y dos partidas que divergen sólo
+    /// ahí no se detectan. Escribir siempre en el mismo orden y con los métodos tipados del
+    /// [`StateWriter`] (ver el módulo `state_hash`).
+    fn hash_state(&self, _writer: &mut StateWriter) {}
 }
 
 /// Errores del planificador.
@@ -258,6 +268,23 @@ impl Scheduler {
             .binary_search_by(|s| order_key(s.as_ref()).cmp(&key));
         self.systems.insert(pos, system);
         Ok(())
+    }
+
+    /// `(instante, sistemas)` para el hash de estado. Desestructura **sin `..`**: un campo nuevo
+    /// obliga a decidir si se hashea. `params` se excluye acá a propósito: es copia de los
+    /// `Params` del `Sim`, que se hashean en su propia sección.
+    pub(crate) fn hash_parts(&self) -> (SimTime, &[Box<dyn System>]) {
+        let Self {
+            time,
+            params: _copia_de_los_params_del_sim,
+            systems,
+        } = self;
+        (*time, systems)
+    }
+
+    /// Sistemas registrados, en orden de ejecución (prioridad, id), para el hash de estado.
+    pub(crate) fn systems(&self) -> &[Box<dyn System>] {
+        &self.systems
     }
 
     /// Fija el instante sin ejecutar nada (para probar el desborde).

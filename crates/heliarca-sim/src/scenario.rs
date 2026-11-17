@@ -37,6 +37,13 @@ impl Scenario {
         Self::default()
     }
 
+    /// Descompone el escenario en `(calendario, parámetros)` para crear el `Sim`. Desestructura
+    /// **sin `..`**: un campo nuevo obliga a decidir cómo entra a la simulación.
+    pub(crate) const fn into_parts(self) -> (Calendar, Params) {
+        let Self { calendar, params } = self;
+        (calendar, params)
+    }
+
     /// Reemplaza el calendario (la fecha de `SimTime = 0`).
     #[must_use]
     pub const fn with_calendar(mut self, calendar: Calendar) -> Self {

@@ -31,7 +31,7 @@
 //! y el instante de aplicación y el resultado. Con la misma semilla, reenviar esos registros en
 //! los mismos pasos (`record.step`) y en el mismo orden reproduce el mismo estado. Reconstruir
 //! un comando a partir de `kind` + `args` (registro de comandos) y serializar el historial son
-//! trabajo posterior; el hash de estado y la prueba de repetición llegan con #28.
+//! trabajo posterior. El hash de estado ([`Sim::state_hash`]) cubre cola e historial.
 //!
 //! Los envíos rechazados por `validate` **no** se registran: no cambiaron nada.
 //!
@@ -213,6 +213,17 @@ pub(crate) struct CommandQueue {
 }
 
 impl CommandQueue {
+    /// `(próximo id, pendientes, historial)` para el hash de estado. Desestructura **sin `..`**:
+    /// un campo nuevo obliga a decidir si se hashea.
+    pub(crate) fn hash_parts(&self) -> (u32, &VecDeque<Queued>, &[CommandRecord]) {
+        let Self {
+            pending,
+            history,
+            next_id,
+        } = self;
+        (*next_id, pending, history)
+    }
+
     /// Arma la entrada de cola de un comando ya validado y reserva su id.
     pub(crate) fn prepare(
         &mut self,

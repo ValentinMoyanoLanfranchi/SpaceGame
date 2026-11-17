@@ -112,6 +112,19 @@ impl Rng {
         Rng::from_seed(splitmix64(mixed))
     }
 
+    /// Estado interno de 128 bits del generador, para el hash de estado (`state_hash`). No se
+    /// expone fuera del crate ni se hace `Clone` el generador.
+    pub(crate) fn state(&self) -> u128 {
+        self.inner.state()
+    }
+
+    /// `(semilla, estado interno)` para el hash. Desestructura **sin `..`**: un campo nuevo obliga
+    /// a decidir si se hashea.
+    pub(crate) fn hash_parts(&self) -> (u64, u128) {
+        let Self { seed, inner } = self;
+        (*seed, inner.state())
+    }
+
     /// Siguiente valor de 64 bits.
     pub fn next_u64(&mut self) -> u64 {
         self.inner.next_u64()

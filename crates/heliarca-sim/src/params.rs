@@ -169,6 +169,18 @@ impl Params {
         self.days_per_year
     }
 
+    /// Campos que entran al hash de estado, en orden: `(days_per_week, days_per_month,
+    /// days_per_year)`. Desestructura **sin `..`**: agregar un parámetro sin decidir si se
+    /// hashea no compila (y todo parámetro afecta el comportamiento, así que debería hashearse).
+    pub(crate) const fn hash_parts(&self) -> [u64; 3] {
+        let Self {
+            days_per_week,
+            days_per_month,
+            days_per_year,
+        } = *self;
+        [days_per_week, days_per_month, days_per_year]
+    }
+
     /// Lee y valida un `params.json` ya parseado. Devuelve **todos** los errores.
     pub(crate) fn from_json_value(root: &Value) -> Result<Self, Vec<ParamsError>> {
         let Value::Object(map) = root else {
