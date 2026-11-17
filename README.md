@@ -54,7 +54,14 @@ La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así q
 - `cargo l`: el mismo clippy con `-D warnings` que corre el CI.
 
 ### Ejecutar la CLI
-`cargo run -p heliarca-cli` compila y corre el ejecutable sin interfaz. Por ahora solo imprime un banner con la versión del núcleo (`heliarca-cli (sim 0.1.0)`); irá creciendo con el MVP.
+`cargo run -p heliarca-cli -- --help` lista los subcomandos y opciones del ejecutable sin interfaz (los argumentos van después de `--`):
+
+- `run`: avanza la simulación N años (todavía no implementado, #41).
+- `validate-data`: valida los datos de `--data-dir` (todavía no implementado, #40).
+- Opciones globales: `--seed <u64>` (por defecto `0`) y `--data-dir <ruta>` (por defecto `data`).
+- Sin subcomando imprime un banner con la versión del núcleo y la fecha inicial (`heliarca-cli (sim 0.1.0) - Año 1, día 1, 00:00:00`).
+
+Códigos de salida: `0` éxito (también `--help` y `--version`), `1` error de datos, de simulación o subcomando todavía sin implementar, `2` error de uso (argumento inválido o desconocido).
 
 ### Correr los checks del CI en local
 Los scripts de [`scripts/ci/`](scripts/ci/) son los mismos que usa el CI. Necesitan `bash` (en Windows viene con Git for Windows, y se corren desde Git Bash) y se lanzan desde la raíz:
