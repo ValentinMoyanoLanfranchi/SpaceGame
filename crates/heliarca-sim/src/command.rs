@@ -345,6 +345,30 @@ impl CommandQueue {
         (*next_id, pending, history)
     }
 
+    /// `(próximo id, pendientes, historial)` para el guardado. Desestructura **sin `..`**: un
+    /// campo nuevo obliga a decidir si se guarda.
+    pub(crate) fn save_parts(&self) -> (u32, &VecDeque<Queued>, &[CommandRecord]) {
+        let Self {
+            pending,
+            history,
+            next_id,
+        } = self;
+        (*next_id, pending, history)
+    }
+
+    /// Reconstruye la cola desde un guardado (sin validar: lo hacen los invariantes al cargar).
+    pub(crate) fn from_save_parts(
+        next_id: u32,
+        pending: VecDeque<Queued>,
+        history: Vec<CommandRecord>,
+    ) -> Self {
+        Self {
+            pending,
+            history,
+            next_id,
+        }
+    }
+
     /// Arma la entrada de cola de un comando ya validado y reserva su id.
     pub(crate) fn prepare(
         &mut self,

@@ -202,6 +202,10 @@ pub struct Sim {
     invariant_mark: Mark,
 }
 
+mod save;
+
+pub use save::{DataFingerprint, SAVE_FORMAT_VERSION, SaveError};
+
 /// Invariantes propios de `Sim` (los de cada módulo están en sus constantes `INVARIANTS`).
 pub(crate) const INVARIANTS: &[FnInvariant] = &[
     FnInvariant::new("sim.steps_cover_history", check_steps_cover_history),

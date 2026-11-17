@@ -43,6 +43,21 @@ use crate::sim::Sim;
 /// Largo máximo, en caracteres, del `label` de `debug.mark`.
 pub const MAX_MARK_LABEL_CHARS: usize = 64;
 
+/// Textos `&'static str` que pueden aparecer dentro de un [`CommandError`] (nombres de argumento
+/// de `InvalidArgument` y claves de motivo de `NotAllowedNow`). Un [`CommandError`] guardado en el
+/// historial no se puede reconstruir con un texto arbitrario (los campos son `&'static str`), así
+/// que el guardado sólo admite los de esta lista. **Al agregar un comando que devuelva
+/// `InvalidArgument`/`NotAllowedNow` con un texto nuevo, agregalo acá.**
+const KNOWN_STATIC_TEXTS: &[&str] = &["label"];
+
+/// El `&'static str` de [`KNOWN_STATIC_TEXTS`] igual a `text`, si lo hay.
+pub(crate) fn known_static_text(text: &str) -> Option<&'static str> {
+    KNOWN_STATIC_TEXTS
+        .iter()
+        .copied()
+        .find(|known| *known == text)
+}
+
 /// Error al construir un comando desde su `kind` y sus argumentos.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]

@@ -320,6 +320,19 @@ impl EventLog {
         events
     }
 
+    /// `(eventos, cursor)` para el guardado. Desestructura **sin `..`**: un campo nuevo obliga a
+    /// decidir si se guarda. A diferencia del hash, el `cursor` **sí** se guarda: es estado de la
+    /// interfaz, pero un `Sim` cargado debe entregar por `poll_events` lo mismo que el original.
+    pub(crate) fn save_parts(&self) -> (&[Event], usize) {
+        let Self { events, cursor } = self;
+        (events, *cursor)
+    }
+
+    /// Reconstruye el log desde un guardado (sin validar: lo hacen los invariantes al cargar).
+    pub(crate) fn from_save_parts(events: Vec<Event>, cursor: usize) -> Self {
+        Self { events, cursor }
+    }
+
     /// Eventos (escritura): para corromper el log en los tests de invariantes.
     #[cfg(test)]
     pub(crate) fn events_for_test(&mut self) -> &mut Vec<Event> {
