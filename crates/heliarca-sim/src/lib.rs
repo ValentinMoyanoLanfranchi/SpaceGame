@@ -101,6 +101,12 @@ mod events;
 pub mod ids;
 mod loc;
 mod params;
+#[cfg(test)]
+mod partition_tests;
+// Configuración de proptest compartida con `tests/properties.rs` (una sola política).
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod proptest_config;
 mod registry;
 #[allow(dead_code)]
 mod rng;

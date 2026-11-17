@@ -95,6 +95,9 @@ UPDATE_SCHEMAS=1 cargo test -p heliarca-sim --test schemas
 
 Un test (`crates/heliarca-sim/tests/schemas.rs`, parte de `cargo test --workspace`) compara los esquemas versionados con los generados y falla, indicando este mismo comando, si no coinciden; así el CI se pone rojo si un modelo cambia sin regenerar. El mismo test valida cada archivo de `data/` contra su esquema y comprueba que el esquema y el cargador (`DataLoader`) coincidan en qué es válido. La salida es determinista (claves ordenadas, LF y salto de línea final; `.gitattributes` fija `eol=lf` en `data/schema/`). El esquema describe la forma (tipos, campos requeridos y desconocidos); las reglas de ids y referencias cruzadas las valida el registro de ids, no el esquema.
 
+### Tests de propiedades
+`heliarca-sim` usa [`proptest`](https://crates.io/crates/proptest) (sólo como dependencia de desarrollo) para comprobar propiedades del núcleo con entradas generadas. La central es que **avanzar 30 × `D1` equivale a avanzar 1 × `D30`**, comparando `Sim::state_hash()`; vive en `crates/heliarca-sim/tests/properties.rs` (API pública) y en `crates/heliarca-sim/src/partition_tests.rs` (con sistemas de prueba), y corre con `cargo test --workspace`. Los tests de propiedades son deterministas (semilla fija, 64 casos) y no escriben archivos en el repo. Para explorar más casos o reproducir un fallo: `PROPTEST_RNG_SEED=<u64> PROPTEST_CASES=<n> cargo test -p heliarca-sim`. El detalle (qué entra al hash y cómo agregar una propiedad) está en [CONTRIBUTING.md](CONTRIBUTING.md#tests-de-propiedades).
+
 ### Correr los checks del CI en local
 Los scripts de [`scripts/ci/`](scripts/ci/) son los mismos que usa el CI. Necesitan `bash` (en Windows viene con Git for Windows, y se corren desde Git Bash) y se lanzan desde la raíz:
 

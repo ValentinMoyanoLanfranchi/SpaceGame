@@ -60,5 +60,30 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
 4. El jugador actúa por **comandos**; la UI lee **modelos de vista**, no el estado interno.
 5. IDs tipados y arenas; errores con `Result`; `clippy` y `rustfmt` obligatorios.
 
+## Tests de propiedades
+Los tests de propiedades usan `proptest` (dev-dependency de `heliarca-sim`, con `default-features = false` y sólo `std`; no entra al código de producción ni a `heliarca-godot`). Hay dos niveles:
+
+- `crates/heliarca-sim/tests/properties.rs`: integración, sólo con la **API pública** (`Sim`, `Scenario`...). Hoy es el caso «escenario vacío», porque desde afuera no se pueden registrar sistemas.
+- `crates/heliarca-sim/src/partition_tests.rs`: dentro del crate, con **sistemas de prueba** periódicos que emiten eventos y consumen un subflujo del RNG.
+
+La propiedad de ejemplo (#45): **30 × `D1` ≡ 1 × `D30`**, y en general cualquier partición del mismo total de días, comparando `Sim::state_hash()`. Se enuncia **sin comandos y sin sistemas `EveryIncrement`**, que dependen de la partición por diseño.
+
+### Qué es «estado» y qué es «contabilidad de llamadas»
+El hash de estado cubre el **estado simulado** y el **historial de entradas** (los comandos), no *cómo se partió el avance*. Por eso `Sim::steps()` (cantidad de llamadas a `advance`) es observable pero **no** entra al hash. En cambio `CommandRecord::step` (en qué llamada se aplicó un comando) sí entra: es parte de las entradas del jugador. Un sistema `EveryIncrement` corre una vez por llamada, así que su efecto también depende de la partición. Cambiar qué entra al hash es un cambio de formato: se sube `FORMAT_VERSION`, se regeneran los hashes «golden» y se avisa en el PR que invalida repeticiones previas (ver `state_hash.rs`).
+
+### Agregar una propiedad
+1. Escribila dentro de `proptest! { #![proptest_config(common::config())] ... }` (en `properties.rs`, con `mod common;`) o con `crate::proptest_config::config()` (en el crate). La configuración común está en `crates/heliarca-sim/tests/common/mod.rs`.
+2. Usá `prop_assert!`/`prop_assert_eq!` (no `assert!`) para que proptest pueda reducir el caso. Sin `HashMap`/`HashSet`, `std::time` ni `unsafe`, como en el resto de `heliarca-sim`.
+3. Mantené el costo bajo (el CI corre en Linux y Windows): la configuración usa 64 casos por propiedad.
+
+### Reproducir un fallo
+La configuración es **determinista por defecto**: semilla fija y los mismos casos en cada corrida (el CI nunca es intermitente), y **no persiste fallos** (no se crea `proptest-regressions/`). Si una propiedad falla, proptest imprime el caso mínimo (`minimal failing input`): copialo a un test normal para reproducirlo y dejarlo como regresión. Para explorar con otras entradas:
+
+```
+PROPTEST_RNG_SEED=12345 PROPTEST_CASES=2000 cargo test -p heliarca-sim --test properties
+```
+
+`PROPTEST_RNG_SEED` (un `u64`) fija la semilla; `PROPTEST_CASES`, la cantidad de casos; el resto de las variables `PROPTEST_*` también se respetan. Cuando una corrida con otra semilla falla, esa semilla más el caso mínimo son suficientes para reproducirlo.
+
 ## Alcance
 La lista de **excluidos del MVP** (doc 21 §1) es una regla: combate, espionaje, mercados grises, varias especies, diplomacia con líderes, regiones en la Tierra, órbitas elípticas, etc. Cualquier idea nueva va al backlog posterior, no al MVP.
