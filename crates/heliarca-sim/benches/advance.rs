@@ -24,7 +24,8 @@
 //! # Tiempo
 //!
 //! Este archivo no usa el reloj del sistema: sólo criterion cronometra (el `clippy.toml` de
-//! heliarca-sim prohíbe `std::time` en nuestro código).
+//! heliarca-sim prohíbe `std::time::SystemTime` e `Instant`, y sus `now`, en nuestro código;
+//! `std::time::Duration`, que sólo es un valor, sí está permitido).
 
 use std::hint::black_box;
 use std::time::Duration;
