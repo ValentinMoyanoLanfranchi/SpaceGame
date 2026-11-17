@@ -31,3 +31,8 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 # Ruido: obliga a renombrar tipos como `sim::SimState`; los nombres explicitos son preferibles.
 module_name_repetitions = "allow"
+
+# Dependencias externas siempre optimizadas, aunque el código propio se compile en debug.
+# Hoy no hay dependencias externas, así que todavía no tiene efecto medible.
+[profile.dev.package."*"]
+opt-level = 3
