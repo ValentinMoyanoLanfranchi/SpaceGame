@@ -2,7 +2,8 @@
 msrv = "1.100.0"
 
 # La simulación es determinista: el tiempo sale de `SimTime` y nunca del reloj del sistema.
-# OJO: este archivo es global al workspace (también aplica a heliarca-cli y heliarca-godot).
+# Este archivo aplica a heliarca-cli y heliarca-godot. heliarca-sim tiene el suyo
+# (crates/heliarca-sim/clippy.toml), que reemplaza a este y agrega HashMap/HashSet: mantenerlos sincronizados.
 disallowed-types = [
     { path = "std::time::SystemTime", reason = "no determinista: usar heliarca_sim::time::SimTime" },
     { path = "std::time::Instant", reason = "no determinista: usar heliarca_sim::time::SimTime" },
