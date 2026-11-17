@@ -1,0 +1,9 @@
+[
+  {
+    "id": "body.luna",
+    "kind": "moon",
+    "orbit": { "type": "circular", "radius_km": 384400, "period_days": "27.3" },
+    "radius_km": 1737,
+    "detect_difficulty": 0
+  }
+]
