@@ -4,10 +4,12 @@
 #![forbid(unsafe_code)]
 
 pub mod arena;
+pub mod command;
 pub mod events;
 pub mod ids;
 pub mod rng;
 pub mod schedule;
+pub mod sim;
 pub mod time;
 
 /// Versión del núcleo de simulación (la del crate).
