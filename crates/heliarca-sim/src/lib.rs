@@ -9,7 +9,7 @@
 //! |---|---|
 //! | Crear | [`Sim::new`]`(`[`Scenario`]`, semilla)` |
 //! | Actuar | [`Sim::submit_command`]: valida y encola un [`Command`]; se aplica en el siguiente avance |
-//! | Avanzar | [`Sim::advance`]`(`[`Increment`]`)` (provisional: #27 lo reemplaza por `AdvanceResult`) |
+//! | Avanzar | [`Sim::advance`]`(`[`Increment`]`)`: aplica los comandos, avanza por tramos y se detiene en la primera interrupción; devuelve un [`AdvanceResult`] |
 //! | Leer eventos | [`Sim::poll_events`] (novedades) / [`Sim::events`] (todo el registro) |
 //! | Consultar | [`Sim::time`], [`Sim::date`], [`Sim::seed`], [`Sim::steps`], [`Sim::command_history`]... |
 //!
@@ -28,7 +28,8 @@
 //!
 //! let mut sim = Sim::new(Scenario::default(), 42);   // crear
 //! sim.submit_command(Box::new(Nada))?;                // enviar un comando
-//! sim.advance(Increment::D1)?;                        // avanzar: lo aplica y pasa un día
+//! let result = sim.advance(Increment::D1)?;           // avanzar: lo aplica y pasa un día
+//! assert!(result.completed());                        // (no hubo interrupciones)
 //! println!("{}", sim.date()?);                         // consultar: «Año 1, día 2, 00:00:00»
 //! for event in sim.poll_events() {                    // leer los eventos nuevos
 //!     println!("{:?} a los {} s", event.kind, event.time.as_seconds());
@@ -113,7 +114,7 @@ pub use events::{
 };
 pub use loc::{LOC_DOMAINS, Loc, is_valid_key};
 pub use scenario::Scenario;
-pub use sim::{AdvanceError, Sim};
+pub use sim::{AdvanceError, AdvanceResult, Sim};
 pub use time::{
     Calendar, CalendarDate, CalendarError, DAYS_PER_YEAR, FIRST_DAY, FIRST_YEAR, HOURS_PER_DAY,
     Increment, MINUTES_PER_HOUR, SECONDS_PER_DAY, SECONDS_PER_HOUR, SECONDS_PER_MINUTE,

@@ -10,24 +10,27 @@
 //!
 //! 1. [`Sim::new`] con un [`Scenario`] y una semilla.
 //! 2. [`Sim::submit_command`]: valida y encola; **no** aplica.
-//! 3. [`Sim::advance`]: aplica los comandos pendientes (FIFO) y avanza el tiempo un
-//!    [`Increment`].
+//! 3. [`Sim::advance`]: aplica los comandos pendientes (FIFO) y avanza el tiempo hasta un
+//!    [`Increment`], deteniéndose en la primera interrupción.
 //! 4. [`Sim::poll_events`]: eventos nuevos desde la última lectura; más los accesores de
 //!    lectura ([`Sim::time`], [`Sim::date`], [`Sim::command_history`]...).
 //!
-//! # Provisional: [`Sim::advance`]
+//! # Avance e interrupciones
 //!
-//! La firma y la semántica de `advance` son **provisionales**. La tarea #27 (`M0.2.4.1`) la
-//! cambia a `advance(Increment) -> AdvanceResult`: subdividirá el incremento según la cadencia
-//! más fina necesaria y se detendrá en el primer evento interruptor, devolviendo el tiempo
-//! realmente avanzado. Quien llame a `advance` hoy debe esperar ese cambio de tipo de retorno.
+//! [`Sim::advance`] avanza un [`Increment`] **por tramos**: hasta la próxima frontera de
+//! cadencia de los sistemas registrados (o el final del incremento) y, tras cada tramo, mira
+//! si algún sistema emitió un evento con [`Interrupt`] distinto de `None`. Si es así se
+//! detiene **en ese instante** y devuelve un [`AdvanceResult`] con el tiempo realmente
+//! avanzado y el evento que lo detuvo, que sigue disponible en [`Sim::poll_events`] (doc 01,
+//! «cualquier evento marcado como relevante detiene el avance»). Ver [`Sim::advance`] para las
+//! reglas exactas.
 
 use thiserror::Error;
 
 use crate::command::{
     Command, CommandError, CommandId, CommandOutcome, CommandQueue, CommandRecord,
 };
-use crate::events::{Event, EventLog};
+use crate::events::{Event, EventId, EventLog, Interrupt};
 use crate::rng::Rng;
 use crate::scenario::Scenario;
 use crate::schedule::Scheduler;
@@ -40,6 +43,46 @@ pub enum AdvanceError {
     /// El avance desbordaría el tiempo de simulación representable (`u64` segundos).
     #[error("el avance desborda el tiempo de simulación")]
     TimeOverflow,
+}
+
+/// Resultado de un [`Sim::advance`] que se llevó a cabo.
+///
+/// # Ejemplo
+///
+/// ```
+/// use heliarca_sim::{Increment, Scenario, Sim};
+///
+/// let mut sim = Sim::new(Scenario::default(), 1);
+/// let result = sim.advance(Increment::D30)?;
+/// // Sin sistemas que emitan interrupciones, se avanza el incremento completo.
+/// assert!(result.completed());
+/// assert_eq!(result.advanced, 30 * 86_400);
+/// assert_eq!(result.interrupted_by, None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AdvanceResult {
+    /// Incremento pedido.
+    pub requested: Increment,
+    /// Tiempo realmente avanzado, en segundos de simulación (nunca más que `requested`).
+    pub advanced: u64,
+    /// Primer evento con [`Interrupt`] distinto de `None` emitido por un sistema durante el
+    /// avance, en orden de emisión; `None` si no hubo. Es un id del registro de eventos
+    /// ([`Sim::events`]); el evento también llega por [`Sim::poll_events`].
+    pub interrupted_by: Option<EventId>,
+}
+
+impl AdvanceResult {
+    /// `true` si se avanzó el incremento completo.
+    ///
+    /// Es independiente de [`AdvanceResult::interrupted_by`]: una interrupción que ocurre
+    /// justo en el último instante del incremento no recorta nada, así que `completed()` sigue
+    /// siendo `true` aunque `interrupted_by` sea `Some`.
+    #[must_use]
+    pub const fn completed(&self) -> bool {
+        self.advanced >= self.requested.seconds()
+    }
 }
 
 /// Estado raíz de la simulación.
@@ -77,7 +120,8 @@ pub enum AdvanceError {
 /// assert_eq!(sim.command_history(), []);
 ///
 /// // 3. Avanzar: aplica los comandos pendientes y avanza el tiempo.
-/// sim.advance(Increment::D1)?;
+/// let result = sim.advance(Increment::D1)?;
+/// assert!(result.completed());
 /// assert_eq!(sim.time(), SimTime::from_days(1).unwrap());
 /// assert_eq!(sim.date()?.to_string(), "Año 1, día 2, 00:00:00");
 /// assert_eq!(sim.command_history()[0].id, id);
@@ -129,7 +173,7 @@ pub struct Sim {
     scheduler: Scheduler,
     events: EventLog,
     commands: CommandQueue,
-    /// Avances (pasos) ejecutados hasta ahora (clave para reproducir un historial de comandos).
+    /// Avances (llamadas a `advance` que se llevaron a cabo) hasta ahora (clave para reproducir un historial de comandos).
     steps: u64,
 }
 
@@ -176,7 +220,8 @@ impl Sim {
         self.calendar.date_at(self.time())
     }
 
-    /// Avances ejecutados con [`Sim::advance`].
+    /// Avances ejecutados con [`Sim::advance`]: uno por llamada que no devolvió error, aunque
+    /// se haya detenido por una interrupción o los tramos internos sean muchos.
     #[must_use]
     pub const fn steps(&self) -> u64 {
         self.steps
@@ -204,6 +249,13 @@ impl Sim {
     #[cfg(test)]
     pub(crate) fn events_mut(&mut self) -> &mut EventLog {
         &mut self.events
+    }
+
+    /// Planificador (escritura): para registrar sistemas de prueba. Los sistemas reales los
+    /// registrará la construcción del `Sim` cuando existan (M0.3+).
+    #[cfg(test)]
+    pub(crate) fn scheduler_mut(&mut self) -> &mut Scheduler {
+        &mut self.scheduler
     }
 
     /// Valida un comando y, si es válido, lo encola. **No lo aplica**: se aplicará al comienzo
@@ -237,12 +289,48 @@ impl Sim {
         self.commands.history()
     }
 
-    /// Avanza un incremento: aplica los comandos pendientes al comienzo (en orden de envío) y
-    /// luego avanza el planificador. Cuenta un paso ([`Sim::steps`]).
+    /// Avanza hasta un [`Increment`]: aplica los comandos pendientes al comienzo (en orden de
+    /// envío) y luego avanza el planificador por tramos, deteniéndose en la primera
+    /// interrupción.
     ///
-    /// **Provisional** (ver la documentación del módulo): #27 lo reemplaza por
-    /// `advance(Increment) -> AdvanceResult`, con subdivisión del incremento e interrupciones.
-    /// Hoy avanza siempre el incremento completo.
+    /// # Tramos
+    ///
+    /// El incremento se parte en tramos que terminan en la próxima frontera de cadencia de los
+    /// sistemas registrados (o en el final del incremento, lo que ocurra antes). Así un D30 con
+    /// un sistema diario son 30 tramos; sin sistemas periódicos, uno. Partir el avance no
+    /// cambia qué corre ni en qué orden (ver el módulo del planificador).
+    ///
+    /// # Interrupciones
+    ///
+    /// Tras cada tramo se mira si un sistema emitió un evento con [`Interrupt`] distinto de
+    /// `None` (`Halt` o `SlowDown`). Si hay alguno, el avance se detiene **en el instante de
+    /// ese tramo** (el `time` del evento: la frontera donde lo emitió el sistema) y no más
+    /// allá:
+    ///
+    /// - Si varios sistemas emiten interrupciones en el mismo instante, todos corren (el
+    ///   instante se completa), todos quedan en el registro y [`AdvanceResult::interrupted_by`]
+    ///   es el primero **en orden de emisión**.
+    /// - Si la interrupción cae exactamente al final del incremento, [`AdvanceResult::completed`]
+    ///   es `true` y `interrupted_by` es `Some`.
+    /// - Los sistemas `Cadence::EveryIncrement`
+    ///   corren una sola vez por llamada, al final (en el instante donde se detuvo, si hubo
+    ///   interrupción); lo que emitan también puede interrumpir.
+    /// - Los eventos de los **comandos** no interrumpen: son consecuencia de lo que el jugador
+    ///   acaba de ordenar. Sólo cuentan los emitidos por sistemas.
+    /// - `SlowDown` detiene igual que `Halt`: la ralentización automática y la ventana de
+    ///   decisión (doc 01, doc 16) son del control de velocidad de la interfaz, que todavía no
+    ///   existe; mientras tanto, detenerse es lo seguro (quien llama puede seguir con un
+    ///   incremento menor). Queda como decisión pendiente.
+    ///
+    /// El evento interruptor queda disponible en [`Sim::poll_events`]; un avance posterior
+    /// continúa desde donde quedó.
+    ///
+    /// # Pasos
+    ///
+    /// Cada llamada que no devuelve error cuenta **un** paso ([`Sim::steps`]) y aplica los
+    /// comandos pendientes **una sola vez**, al comienzo, con el mismo `step` en el historial,
+    /// sin importar cuántos tramos tenga ni si se interrumpió. Reproducir una partida es
+    /// repetir las mismas llamadas con los mismos incrementos.
     ///
     /// Si un `apply` falla se registra el error en el historial y se **continúa** con el resto.
     /// Para el comportamiento ante un pánico y lo que ve cada comando durante el paso, ver la
@@ -252,15 +340,42 @@ impl Sim {
     ///
     /// [`AdvanceError::TimeOverflow`] si el incremento desborda el tiempo. Se comprueba
     /// **antes** de tocar nada: no se aplica ningún comando y el estado no cambia.
-    pub fn advance(&mut self, increment: Increment) -> Result<(), AdvanceError> {
-        self.time()
+    pub fn advance(&mut self, increment: Increment) -> Result<AdvanceResult, AdvanceError> {
+        let start = self.time();
+        let target = start
             .checked_advance(increment)
             .ok_or(AdvanceError::TimeOverflow)?;
         self.apply_pending_commands();
-        // Con el desborde ya descartado, el planificador no tiene otra forma de fallar.
-        self.scheduler
-            .advance(increment)
-            .map_err(|_| AdvanceError::TimeOverflow)
+        self.steps = self.steps.saturating_add(1);
+
+        // Sólo cuentan los eventos que emitan los sistemas, no los de los comandos.
+        let first_system_event = self.events.len();
+        loop {
+            let next = self.scheduler.next_boundary(self.time(), target);
+            self.scheduler.advance_to(next, &mut self.events);
+            if next >= target || self.first_interrupt_since(first_system_event).is_some() {
+                break;
+            }
+        }
+        // Una sola vez por avance, al final (o donde se detuvo).
+        self.scheduler.run_every_increment(&mut self.events);
+        let interrupted_by = self.first_interrupt_since(first_system_event);
+
+        Ok(AdvanceResult {
+            requested: increment,
+            advanced: self.time().as_seconds().saturating_sub(start.as_seconds()),
+            interrupted_by,
+        })
+    }
+
+    /// Primer evento interruptor (en orden de emisión) entre los emitidos desde el índice
+    /// `first`.
+    fn first_interrupt_since(&self, first: usize) -> Option<EventId> {
+        self.events
+            .iter()
+            .skip(first)
+            .find(|event| event.interrupt != Interrupt::None)
+            .map(|event| event.id)
     }
 
     /// Aplica, en orden de envío, los comandos encolados antes de este paso.
@@ -282,7 +397,6 @@ impl Sim {
             self.commands
                 .record(CommandRecord::new(queued, step, applied_at, outcome));
         }
-        self.steps = self.steps.saturating_add(1);
     }
 }
 
@@ -493,5 +607,439 @@ mod tests {
         let ids: Vec<u32> = sim.events().iter().map(|e| e.id.raw()).collect();
         assert_eq!(ids, [0, 1]);
         assert_eq!(ns(&mut sim), [Some(Value::UInt(2)), Some(Value::UInt(1))]);
+    }
+
+    // ---- Avance por tramos e interrupciones ----
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::schedule::{Cadence, Priority, StepContext, System, SystemId};
+
+    const DAY: u64 = 86_400;
+
+    type Runs = Rc<RefCell<Vec<(&'static str, u64)>>>;
+
+    /// Sistema de prueba: registra cada corrida `(id, instante)` y, en los instantes
+    /// indicados, emite un evento con la interrupción dada.
+    #[derive(Debug)]
+    struct Scripted {
+        id: &'static str,
+        priority: u16,
+        cadence: Cadence,
+        fire: Vec<(u64, Interrupt)>,
+        runs: Runs,
+    }
+
+    impl System for Scripted {
+        fn id(&self) -> SystemId {
+            SystemId(self.id)
+        }
+        fn priority(&self) -> Priority {
+            Priority(self.priority)
+        }
+        fn cadence(&self) -> Cadence {
+            self.cadence
+        }
+        fn step(&mut self, ctx: &mut StepContext<'_>) {
+            let now = ctx.time().as_seconds();
+            self.runs.borrow_mut().push((self.id, now));
+            for &(at, interrupt) in &self.fire {
+                if at == now {
+                    ctx.emit(
+                        EventKind::JumpPointCrossed,
+                        None,
+                        interrupt,
+                        Payload::new().with("system", Value::Text(self.id.into())),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    fn add(
+        sim: &mut Sim,
+        id: &'static str,
+        priority: u16,
+        cadence: Cadence,
+        fire: &[(u64, Interrupt)],
+    ) -> Runs {
+        let runs = Runs::default();
+        sim.scheduler_mut()
+            .register(Box::new(Scripted {
+                id,
+                priority,
+                cadence,
+                fire: fire.to_vec(),
+                runs: Rc::clone(&runs),
+            }))
+            .unwrap();
+        runs
+    }
+
+    fn count(runs: &Runs, id: &str) -> usize {
+        runs.borrow().iter().filter(|r| r.0 == id).count()
+    }
+
+    #[test]
+    fn un_halt_a_los_3_dias_detiene_un_avance_de_30() {
+        let mut sim = sim(1);
+        let runs = add(&mut sim, "dia", 5, Cadence::Daily, &[]);
+        add(
+            &mut sim,
+            "alerta",
+            0,
+            Cadence::Daily,
+            &[(3 * DAY, Interrupt::Halt)],
+        );
+        let result = sim.advance(Increment::D30).unwrap();
+        assert_eq!(result.advanced, 3 * DAY);
+        assert_eq!(result.requested, Increment::D30);
+        assert!(!result.completed());
+        assert_eq!(sim.time(), SimTime::from_seconds(3 * DAY));
+        // El avance no pasó del instante del evento: el diario corrió 3 veces, no 30.
+        assert_eq!(count(&runs, "dia"), 3);
+        let events = sim.poll_events().to_vec();
+        assert_eq!(events.len(), 1);
+        assert_eq!(Some(events[0].id), result.interrupted_by);
+        assert_eq!(events[0].time, SimTime::from_seconds(3 * DAY));
+        assert_eq!(events[0].interrupt, Interrupt::Halt);
+    }
+
+    #[test]
+    fn sin_eventos_relevantes_se_avanza_el_incremento_completo() {
+        let mut sim = sim(1);
+        let runs = add(&mut sim, "dia", 0, Cadence::Daily, &[]);
+        let result = sim.advance(Increment::D30).unwrap();
+        assert_eq!(result.advanced, 30 * DAY);
+        assert!(result.completed());
+        assert_eq!(result.interrupted_by, None);
+        assert_eq!(count(&runs, "dia"), 30);
+        assert_eq!(sim.poll_events(), []);
+    }
+
+    #[test]
+    fn sin_sistemas_se_avanza_el_incremento_completo() {
+        for inc in Increment::ALL {
+            let mut sim = sim(1);
+            let result = sim.advance(inc).unwrap();
+            assert_eq!(result.advanced, inc.seconds());
+            assert!(result.completed());
+            assert_eq!(sim.time(), SimTime::from_seconds(inc.seconds()));
+        }
+    }
+
+    #[test]
+    fn un_evento_no_relevante_no_detiene() {
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "aviso",
+            0,
+            Cadence::Daily,
+            &[(3 * DAY, Interrupt::None)],
+        );
+        let result = sim.advance(Increment::D30).unwrap();
+        assert!(result.completed());
+        assert_eq!(result.interrupted_by, None);
+        assert_eq!(sim.poll_events().len(), 1);
+    }
+
+    #[test]
+    fn slow_down_detiene_como_halt() {
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "hostil",
+            0,
+            Cadence::Daily,
+            &[(2 * DAY, Interrupt::SlowDown)],
+        );
+        let result = sim.advance(Increment::D5).unwrap();
+        assert_eq!(result.advanced, 2 * DAY);
+        let id = result.interrupted_by.unwrap();
+        assert_eq!(sim.events().get(id).unwrap().interrupt, Interrupt::SlowDown);
+    }
+
+    #[test]
+    fn la_primera_interrupcion_gana_y_las_posteriores_no_ocurren() {
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "a",
+            0,
+            Cadence::Daily,
+            &[(4 * DAY, Interrupt::Halt), (2 * DAY, Interrupt::Halt)],
+        );
+        let result = sim.advance(Increment::D30).unwrap();
+        assert_eq!(result.advanced, 2 * DAY);
+        assert_eq!(sim.events().len(), 1);
+    }
+
+    #[test]
+    fn interrupcion_en_el_primer_tramo_de_un_incremento_corto() {
+        // Un sistema por incremento que interrumpe en el primer (y único) tramo de S5.
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "inc",
+            0,
+            Cadence::EveryIncrement,
+            &[(5, Interrupt::Halt)],
+        );
+        let result = sim.advance(Increment::S5).unwrap();
+        assert_eq!(result.advanced, 5);
+        assert!(
+            result.completed(),
+            "justo al final: completo e interrumpido"
+        );
+        assert!(result.interrupted_by.is_some());
+    }
+
+    #[test]
+    fn interrupcion_en_el_primer_dia_recorta_un_d5() {
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "alerta",
+            0,
+            Cadence::Daily,
+            &[(DAY, Interrupt::Halt)],
+        );
+        let result = sim.advance(Increment::D5).unwrap();
+        assert_eq!(result.advanced, DAY);
+        assert!(!result.completed());
+    }
+
+    #[test]
+    fn interrupcion_justo_al_final_del_incremento_es_completa_e_interrumpida() {
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "alerta",
+            0,
+            Cadence::Daily,
+            &[(5 * DAY, Interrupt::Halt)],
+        );
+        let result = sim.advance(Increment::D5).unwrap();
+        assert_eq!(result.advanced, 5 * DAY);
+        assert!(result.completed());
+        assert!(result.interrupted_by.is_some());
+    }
+
+    #[test]
+    fn empate_en_el_mismo_instante_deja_todo_en_el_log_y_gana_el_primero_emitido() {
+        let mut sim = sim(1);
+        // Misma frontera; por prioridad corre primero "b" (0) y luego "a" (1).
+        add(
+            &mut sim,
+            "a",
+            1,
+            Cadence::Daily,
+            &[(2 * DAY, Interrupt::Halt)],
+        );
+        add(
+            &mut sim,
+            "b",
+            0,
+            Cadence::Daily,
+            &[(2 * DAY, Interrupt::SlowDown)],
+        );
+        let result = sim.advance(Increment::D30).unwrap();
+        assert_eq!(result.advanced, 2 * DAY);
+        let events = sim.poll_events().to_vec();
+        assert_eq!(events.len(), 2, "el instante se completa");
+        assert_eq!(result.interrupted_by, Some(events[0].id));
+        assert_eq!(
+            events[0].payload.get("system"),
+            Some(&Value::Text("b".into()))
+        );
+        assert_eq!(
+            events[1].payload.get("system"),
+            Some(&Value::Text("a".into()))
+        );
+    }
+
+    #[test]
+    fn un_avance_posterior_continua_desde_donde_quedo() {
+        let mut sim = sim(1);
+        let runs = add(
+            &mut sim,
+            "alerta",
+            0,
+            Cadence::Daily,
+            &[(3 * DAY, Interrupt::Halt), (10 * DAY, Interrupt::Halt)],
+        );
+        let first = sim.advance(Increment::D30).unwrap();
+        assert_eq!(first.advanced, 3 * DAY);
+        let second = sim.advance(Increment::D30).unwrap();
+        assert_eq!(second.advanced, 7 * DAY, "hasta el día 10");
+        assert_eq!(sim.time(), SimTime::from_seconds(10 * DAY));
+        let third = sim.advance(Increment::D30).unwrap();
+        assert!(third.completed());
+        assert_eq!(third.interrupted_by, None);
+        assert_eq!(sim.time(), SimTime::from_seconds(40 * DAY));
+        // Ninguna frontera se corrió dos veces ni se salteó.
+        assert_eq!(count(&runs, "alerta"), 40);
+        assert_eq!(sim.events().len(), 2);
+    }
+
+    #[test]
+    fn el_sistema_por_incremento_corre_una_vez_por_avance_donde_termina() {
+        let mut sim = sim(1);
+        let runs = add(&mut sim, "inc", 0, Cadence::EveryIncrement, &[]);
+        add(
+            &mut sim,
+            "alerta",
+            0,
+            Cadence::Daily,
+            &[(3 * DAY, Interrupt::Halt)],
+        );
+        sim.advance(Increment::D30).unwrap();
+        sim.advance(Increment::S5).unwrap();
+        assert_eq!(
+            *runs.borrow(),
+            [("inc", 3 * DAY), ("inc", 3 * DAY + 5)],
+            "una vez por llamada, en el instante donde terminó"
+        );
+    }
+
+    #[test]
+    fn un_evento_interruptor_de_un_comando_no_detiene() {
+        #[derive(Debug)]
+        struct HaltCmd;
+        impl Command for HaltCmd {
+            fn kind(&self) -> &'static str {
+                "test.halt"
+            }
+            fn args(&self) -> Payload {
+                Payload::new()
+            }
+            fn validate(&self, _: &Sim) -> Result<(), CommandError> {
+                Ok(())
+            }
+            fn apply(&self, sim: &mut Sim) -> Result<(), CommandError> {
+                let time = sim.time();
+                sim.events_mut().emit(
+                    time,
+                    EventKind::LaunchFailed,
+                    None,
+                    Interrupt::Halt,
+                    Payload::new(),
+                )?;
+                Ok(())
+            }
+        }
+        let mut sim = sim(1);
+        sim.submit_command(Box::new(HaltCmd)).unwrap();
+        let result = sim.advance(Increment::D1).unwrap();
+        assert!(result.completed());
+        assert_eq!(result.interrupted_by, None);
+        assert_eq!(sim.poll_events().len(), 1, "el evento del comando sí queda");
+    }
+
+    #[test]
+    fn los_comandos_se_aplican_una_vez_por_llamada_aunque_haya_interrupcion() {
+        let mut sim = sim(1);
+        add(
+            &mut sim,
+            "alerta",
+            0,
+            Cadence::Daily,
+            &[(3 * DAY, Interrupt::Halt)],
+        );
+        sim.submit_command(Box::new(Mark(1))).unwrap();
+        sim.advance(Increment::D30).unwrap(); // interrumpido en el día 3
+        assert_eq!(sim.steps(), 1);
+        sim.submit_command(Box::new(Mark(2))).unwrap();
+        sim.advance(Increment::D5).unwrap();
+        assert_eq!(sim.steps(), 2);
+        let h = sim.command_history();
+        assert_eq!((h[0].step, h[0].applied_at), (0, SimTime::ZERO));
+        assert_eq!(
+            (h[1].step, h[1].applied_at),
+            (1, SimTime::from_seconds(3 * DAY))
+        );
+    }
+
+    #[test]
+    fn el_desborde_es_error_y_no_cambia_el_estado() {
+        let mut sim = sim(1);
+        add(&mut sim, "dia", 0, Cadence::Daily, &[]);
+        sim.submit_command(Box::new(Mark(1))).unwrap();
+        sim.scheduler_mut().set_time_for_test(SimTime::MAX);
+        assert_eq!(sim.advance(Increment::S5), Err(AdvanceError::TimeOverflow));
+        assert_eq!(sim.time(), SimTime::MAX);
+        assert_eq!(sim.steps(), 0);
+        assert_eq!(sim.pending_command_count(), 1, "el comando sigue pendiente");
+        assert_eq!(sim.command_history(), []);
+        assert!(sim.events().is_empty());
+    }
+
+    #[test]
+    fn dos_sim_iguales_dan_los_mismos_resultados() {
+        let run = || {
+            let mut sim = sim(7);
+            add(&mut sim, "dia", 1, Cadence::Daily, &[]);
+            add(
+                &mut sim,
+                "alerta",
+                0,
+                Cadence::Weekly,
+                &[(14 * DAY, Interrupt::Halt), (28 * DAY, Interrupt::None)],
+            );
+            sim.submit_command(Box::new(Mark(1))).unwrap();
+            let results: Vec<AdvanceResult> = (0..4)
+                .map(|_| sim.advance(Increment::D30).unwrap())
+                .collect();
+            (
+                results,
+                sim.time(),
+                sim.events().iter().cloned().collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(run(), run());
+    }
+
+    /// Propiedad: lo avanzado suma el tiempo total, nada corre dos veces ni se saltea, y la
+    /// interrupción recorta sólo hasta su instante, para secuencias pseudoaleatorias.
+    #[test]
+    fn lo_avanzado_suma_el_total_y_no_se_pierden_corridas() {
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for round in 0..50 {
+            let mut sim = sim(round);
+            let runs = add(&mut sim, "dia", 5, Cadence::Daily, &[]);
+            let sem = add(&mut sim, "sem", 3, Cadence::Weekly, &[]);
+            // Interrumpe en los días 9, 23 y 100 (que caen dentro de algún avance largo).
+            let halts = [9 * DAY, 23 * DAY, 100 * DAY].map(|t| (t, Interrupt::Halt));
+            add(&mut sim, "alerta", 0, Cadence::Daily, &halts);
+            let (mut total, mut calls) = (0u64, 0u64);
+            while sim.time().as_seconds() < 150 * DAY {
+                // xorshift64: sin dependencias externas.
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let inc = Increment::ALL[(state % 5) as usize];
+                let r = sim.advance(inc).unwrap();
+                assert!(r.advanced <= inc.seconds());
+                assert_eq!(r.completed(), r.advanced == inc.seconds());
+                if !r.completed() {
+                    assert!(r.interrupted_by.is_some());
+                }
+                total += r.advanced;
+                calls += 1;
+            }
+            let t = sim.time().as_seconds();
+            assert_eq!(total, t);
+            assert_eq!(sim.steps(), calls);
+            assert_eq!(count(&runs, "dia") as u64, t / DAY);
+            assert_eq!(count(&sem, "sem") as u64, t / (7 * DAY));
+            let halted = sim.events().len();
+            assert_eq!(
+                halted,
+                [9, 23, 100].iter().filter(|d| **d * DAY <= t).count()
+            );
+        }
     }
 }
