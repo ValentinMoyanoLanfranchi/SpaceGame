@@ -107,6 +107,7 @@ mod scenario;
 #[allow(dead_code)]
 mod schedule;
 mod sim;
+mod state_hash;
 mod time;
 
 pub use command::{Command, CommandError, CommandId, CommandOutcome, CommandRecord};
@@ -116,6 +117,7 @@ pub use events::{
 pub use loc::{LOC_DOMAINS, Loc, is_valid_key};
 pub use scenario::Scenario;
 pub use sim::{AdvanceError, AdvanceResult, Sim};
+pub use state_hash::StateHash;
 pub use time::{
     Calendar, CalendarDate, CalendarError, DAYS_PER_YEAR, FIRST_DAY, FIRST_YEAR, HOURS_PER_DAY,
     Increment, MINUTES_PER_HOUR, SECONDS_PER_DAY, SECONDS_PER_HOUR, SECONDS_PER_MINUTE,
