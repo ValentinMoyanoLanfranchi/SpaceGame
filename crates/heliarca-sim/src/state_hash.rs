@@ -283,6 +283,7 @@ fn write_kind(w: &mut StateWriter, kind: EventKind) {
         EventKind::PublicSupportChanged => 6,
         EventKind::InternalCrisis => 7,
         EventKind::JumpPointCrossed => 8,
+        EventKind::DebugMark => 9,
     });
 }
 

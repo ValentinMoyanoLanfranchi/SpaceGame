@@ -61,6 +61,12 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
 4. El jugador actúa por **comandos**; la UI lee **modelos de vista**, no el estado interno.
 5. IDs tipados y arenas; errores con `Result`; `clippy` y `rustfmt` obligatorios.
 
+## Comandos y scripts
+- Un comando nuevo implementa `heliarca_sim::Command` y se **registra** en `CommandRegistry::builtin` (`crates/heliarca-sim/src/command_registry.rs`) con su `kind` (`dominio.verbo`) y un constructor desde `Payload`: así la CLI (`run --script`) y los reproductores de historial pueden reconstruirlo a partir de `kind` + `args`. El constructor valida sólo la **forma** de los argumentos (con `CommandBuildError`); la validez contra el estado va en `Command::validate`/`apply`. Un test debe comprobar `build(c.kind(), &c.args())`.
+- `debug.mark` es infraestructura de diagnóstico, no mecánica del juego: no la uses para modelar nada del diseño.
+- Agregar una variante de `EventKind` requiere su tag en `state_hash.rs` (`write_kind`); un tag nuevo no cambia los hashes de estados que no la usan, así que no sube `FORMAT_VERSION`.
+- Formato de los scripts de `run --script` (versión, `at` en días, orden, posiciones de error): README, sección «Scripts de comandos». Si cambia el formato, subí `version` y mantené el mensaje de versión desconocida. El script de ejemplo es `examples/script-ejemplo.json` y lo corre un test.
+
 ## Tests de propiedades
 Los tests de propiedades usan `proptest` (dev-dependency de `heliarca-sim`, con `default-features = false` y sólo `std`; no entra al código de producción ni a `heliarca-godot`). Hay dos niveles:
 

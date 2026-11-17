@@ -477,3 +477,341 @@ fn un_archivo_enorme_no_hace_panic_y_acota_los_errores() {
         "{err:?}"
     );
 }
+
+// ---- run --script (#42) ----
+
+fn script_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/script-ejemplo.json")
+}
+
+/// Escribe un script de prueba en un directorio propio del test y devuelve su ruta.
+fn script_file(name: &str, content: impl AsRef<[u8]>) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("scripts");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    fs::write(&path, content).unwrap();
+    path
+}
+
+fn run_script(script: &Path, extra: &[&str]) -> Output {
+    let mut args = vec!["--script", script.to_str().unwrap()];
+    args.extend_from_slice(extra);
+    run_real(&args)
+}
+
+fn marks(entries: &[(u64, &str)]) -> String {
+    let items: Vec<String> = entries
+        .iter()
+        .map(|(at, label)| {
+            format!(
+                r#"{{"at":{at},"command":{{"kind":"debug.mark","args":{{"label":"{label}"}}}}}}"#
+            )
+        })
+        .collect();
+    format!(r#"{{"version":1,"commands":[{}]}}"#, items.join(","))
+}
+
+#[test]
+fn el_script_de_ejemplo_corre_y_cuenta_sus_comandos() {
+    let output = run_script(&script_path(), &["--years", "1", "--seed", "3"]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    let out = text(&output.stdout);
+    assert!(
+        field(&out, "Script").ends_with("script-ejemplo.json (3 comandos)"),
+        "{out}"
+    );
+    assert_eq!(field(&out, "Comandos aplicados"), "3");
+    assert_eq!(field(&out, "Eventos"), "3");
+    assert_eq!(field(&out, "Fecha final"), "Año 2, día 1, 00:00:00");
+    assert!(is_hash(field(&out, "Hash de estado")), "{out}");
+}
+
+#[test]
+fn sin_script_no_hay_lineas_de_script() {
+    let out = text(&run_real(&["--years", "1"]).stdout);
+    assert!(
+        !out.contains("Script:") && !out.contains("Comandos aplicados"),
+        "{out}"
+    );
+}
+
+#[test]
+fn el_mismo_script_con_la_misma_semilla_reproduce_el_hash() {
+    let script = script_file(
+        "repro.json",
+        marks(&[(0, "a"), (10, "b"), (10, "c"), (200, "d")]),
+    );
+    let args = ["--years", "1", "--seed", "11"];
+    let first = text(&run_script(&script, &args).stdout);
+    let second = text(&run_script(&script, &args).stdout);
+    assert_eq!(without_duration(&first), without_duration(&second));
+    assert_eq!(field(&first, "Comandos aplicados"), "4");
+
+    // Otra semilla, otro hash (el hash incluye el estado del RNG).
+    let other_seed = text(&run_script(&script, &["--years", "1", "--seed", "12"]).stdout);
+    assert_ne!(
+        field(&first, "Hash de estado"),
+        field(&other_seed, "Hash de estado")
+    );
+
+    // Otro script, otro hash: distinto `at`, distinto texto o distinto orden.
+    let hash = |content: String, name: &str| {
+        let path = script_file(name, content);
+        text(&run_script(&path, &args).stdout)
+            .lines()
+            .find_map(|l| l.strip_prefix("Hash de estado: ").map(str::to_owned))
+            .unwrap()
+    };
+    let base = field(&first, "Hash de estado").to_owned();
+    assert_ne!(
+        base,
+        hash(
+            marks(&[(0, "a"), (10, "b"), (10, "c"), (201, "d")]),
+            "repro-at.json"
+        )
+    );
+    assert_ne!(
+        base,
+        hash(
+            marks(&[(0, "a"), (10, "b"), (10, "c"), (200, "e")]),
+            "repro-texto.json"
+        )
+    );
+    assert_ne!(
+        base,
+        hash(
+            marks(&[(0, "a"), (10, "c"), (10, "b"), (200, "d")]),
+            "repro-orden.json"
+        )
+    );
+}
+
+#[test]
+fn un_script_vacio_da_el_mismo_hash_que_sin_script() {
+    let empty = script_file("vacio.json", r#"{"version": 1, "commands": []}"#);
+    let args = ["--years", "2", "--seed", "5"];
+    let with = text(&run_script(&empty, &args).stdout);
+    let without = text(&run_real(&args).stdout);
+    assert_eq!(
+        field(&with, "Hash de estado"),
+        field(&without, "Hash de estado")
+    );
+    assert_eq!(field(&with, "Comandos aplicados"), "0");
+    assert!(
+        field(&with, "Script").ends_with("vacio.json (0 comandos)"),
+        "{with}"
+    );
+}
+
+#[test]
+fn el_script_con_otros_incrementos_llega_a_la_misma_fecha_y_aplica_todo() {
+    let script = script_file("incs.json", marks(&[(0, "a"), (7, "b"), (364, "c")]));
+    for increment in ["h1", "d1", "d5", "d30"] {
+        let output = run_script(&script, &["--years", "1", "--increment", increment]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{increment}: {}",
+            text(&output.stderr)
+        );
+        let out = text(&output.stdout);
+        assert_eq!(
+            field(&out, "Fecha final"),
+            "Año 2, día 1, 00:00:00",
+            "{increment}"
+        );
+        assert_eq!(field(&out, "Comandos aplicados"), "3", "{increment}");
+    }
+}
+
+/// Corre un script malo: debe salir con 1 sin imprimir resultados, y stderr debe contener todas
+/// las partes dadas.
+fn assert_script_error(name: &str, content: impl AsRef<[u8]>, years: &str, parts: &[&str]) {
+    let script = script_file(name, content);
+    let output = run_script(&script, &["--years", years]);
+    let (out, err) = (text(&output.stdout), text(&output.stderr));
+    assert_eq!(output.status.code(), Some(1), "{name}: {err}");
+    assert!(out.is_empty(), "{name}: no debe imprimir resultados: {out}");
+    assert!(
+        err.contains(name),
+        "{name}: el mensaje nombra el archivo: {err}"
+    );
+    for part in parts {
+        assert!(err.contains(part), "{name}: falta {part:?} en: {err}");
+    }
+}
+
+#[test]
+fn un_comando_invalido_indica_su_posicion_y_el_motivo() {
+    let mark = |at: u64, args: &str| {
+        format!(r#"{{"at":{at},"command":{{"kind":"debug.mark","args":{args}}}}}"#)
+    };
+    let ok = mark(0, r#"{"label":"a"}"#);
+    let wrap =
+        |entries: &[String]| format!(r#"{{"version":1,"commands":[{}]}}"#, entries.join(","));
+
+    assert_script_error(
+        "kind.json",
+        wrap(&[
+            ok.clone(),
+            ok.clone(),
+            r#"{"at":1,"command":{"kind":"flota.crear"}}"#.into(),
+        ]),
+        "1",
+        &[
+            "entrada 3",
+            "command.kind",
+            "comando desconocido: flota.crear",
+            "debug.mark",
+        ],
+    );
+    assert_script_error(
+        "falta.json",
+        wrap(&[ok.clone(), mark(1, "{}")]),
+        "1",
+        &["entrada 2", "command.args", "falta el argumento", "label"],
+    );
+    assert_script_error(
+        "sobra.json",
+        wrap(&[mark(1, r#"{"label":"a","extra":1}"#)]),
+        "1",
+        &["entrada 1", "command.args.extra", "argumento desconocido"],
+    );
+    assert_script_error(
+        "tipo.json",
+        wrap(&[
+            ok.clone(),
+            ok.clone(),
+            ok.clone(),
+            mark(4, r#"{"label":7}"#),
+        ]),
+        "1",
+        &["entrada 4", "command.args.label", "debe ser texto"],
+    );
+    assert_script_error(
+        "orden.json",
+        wrap(&[mark(5, r#"{"label":"a"}"#), mark(4, r#"{"label":"b"}"#)]),
+        "1",
+        &["entrada 2", "campo at", "fuera de orden"],
+    );
+    assert_script_error(
+        "negativo.json",
+        wrap(&[mark(0, r#"{"label":"a"}"#).replace("\"at\":0", "\"at\":-3")]),
+        "1",
+        &["entrada 1", "campo at", "negativo"],
+    );
+    assert_script_error(
+        "decimal.json",
+        wrap(&[mark(0, r#"{"label":"a"}"#).replace("\"at\":0", "\"at\":1.5")]),
+        "1",
+        &["entrada 1", "campo at", "no es un entero"],
+    );
+    assert_script_error(
+        "enorme.json",
+        wrap(&[ok.clone(), mark(u64::MAX, r#"{"label":"a"}"#)]),
+        "1",
+        &["entrada 2", "campo at", "fuera de la corrida"],
+    );
+    assert_script_error(
+        "rango.json",
+        wrap(&[mark(365, r#"{"label":"a"}"#)]),
+        "1",
+        &["entrada 1", "campo at", "debe ser menor que 365"],
+    );
+    assert_script_error(
+        "sin-anos.json",
+        wrap(std::slice::from_ref(&ok)),
+        "0",
+        &["entrada 1", "--years 0"],
+    );
+    assert_script_error(
+        "campo-extra.json",
+        r#"{"version":1,"commands":[{"at":0,"cmd":1,"command":{"kind":"debug.mark","args":{"label":"a"}}}]}"#,
+        "1",
+        &["entrada 1", "campo cmd", "campo desconocido"],
+    );
+    assert_script_error(
+        "sin-command.json",
+        r#"{"version":1,"commands":[{"at":0}]}"#,
+        "1",
+        &["entrada 1", "campo command", "falta"],
+    );
+}
+
+#[test]
+fn errores_de_raiz_version_y_json_malformado() {
+    assert_script_error(
+        "v2.json",
+        r#"{"version":2,"commands":[]}"#,
+        "1",
+        &["campo version", "no soportada: 2", "versión 1"],
+    );
+    assert_script_error(
+        "sin-version.json",
+        r#"{"commands":[]}"#,
+        "1",
+        &["campo version", "falta"],
+    );
+    assert_script_error("lista.json", "[]", "1", &["la raíz debe ser un objeto"]);
+    assert_script_error(
+        "raiz-extra.json",
+        r#"{"version":1,"commands":[],"x":0}"#,
+        "1",
+        &["campo x"],
+    );
+    assert_script_error(
+        "malo.json",
+        "{\n  \"version\": 1,\n  \"commands\": [\n",
+        "1",
+        &["JSON malformado en la línea 4"],
+    );
+    assert_script_error("cero-bytes.json", "", "1", &["JSON malformado"]);
+    assert_script_error(
+        "binario.json",
+        [0xff, 0xfe, 0x00, 0x80, 0x01],
+        "1",
+        &["UTF-8"],
+    );
+    assert_script_error(
+        "profundo.json",
+        "[".repeat(100_000),
+        "1",
+        &["JSON malformado"],
+    );
+    assert_script_error(
+        "gigante.json",
+        vec![b' '; 17 * 1024 * 1024],
+        "1",
+        &["supera el máximo"],
+    );
+}
+
+#[test]
+fn un_script_inexistente_o_un_directorio_salen_con_1() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("scripts");
+    fs::create_dir_all(&dir).unwrap();
+    for path in [dir.join("no-existe.json"), dir.clone()] {
+        let output = run_script(&path, &[]);
+        assert_eq!(output.status.code(), Some(1), "{}", path.display());
+        let err = text(&output.stderr);
+        assert!(err.contains("no se pudo leer"), "{err}");
+        assert_eq!(text(&output.stdout), "");
+    }
+}
+
+#[test]
+fn script_sin_valor_es_un_error_de_uso() {
+    let output = run_real(&["--script"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(text(&output.stdout), "");
+    assert!(text(&output.stderr).contains("--script"));
+}
+
+#[test]
+fn el_script_se_valida_antes_de_correr_aunque_sea_largo() {
+    // Con 10000 años un error de forma debe salir de inmediato, no tras minutos de corrida.
+    let script = script_file("largo.json", marks(&[(0, "a"), (0, "")]));
+    let output = run_script(&script, &["--years", "10000", "--increment", "s5"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text(&output.stderr).contains("entrada 2"));
+}
