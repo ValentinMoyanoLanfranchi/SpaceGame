@@ -1,0 +1,16 @@
+# Configuración de Cargo compartida por todo el workspace (Windows y Linux).
+
+[alias]
+# Atajos: `cargo c` (verificación rápida, sin generar binarios) y `cargo t` (pruebas).
+c = "check --workspace --all-targets"
+t = "test --workspace"
+# `cargo l` corre el mismo clippy que el CI.
+l = "clippy --workspace --all-targets -- -D warnings"
+
+# Linker rápido: NO se activa a propósito.
+# `rust-lld` ya viene con el toolchain, pero medido en Windows (MSVC) con los crates actuales
+# no mejora el tiempo (ver README) y fijarlo acá lo haría obligatorio para todos, incluido el
+# CI, y config.toml no permite condicionarlo a "si está instalado". Cuando haya dependencias
+# pesadas se puede probar de forma local, sin tocar el repo, con una variable de entorno:
+#   Windows (PowerShell): $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "rust-lld.exe"
+#   Linux (con mold):     RUSTFLAGS="-Clink-arg=-fuse-ld=mold" cargo build
