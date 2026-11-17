@@ -13,3 +13,6 @@ crate-type = ["cdylib"]
 [dependencies]
 heliarca-sim = { path = "../heliarca-sim" }
 # La dependencia de godot (gdext) se agrega en la tarea de integración con Godot, no aquí.
+
+[lints]
+workspace = true

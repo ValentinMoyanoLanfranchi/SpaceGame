@@ -9,3 +9,6 @@ publish.workspace = true
 
 [dependencies]
 heliarca-sim = { path = "../heliarca-sim" }
+
+[lints]
+workspace = true
