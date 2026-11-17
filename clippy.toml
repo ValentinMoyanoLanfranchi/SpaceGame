@@ -1,2 +1,13 @@
 # Debe coincidir con rust-version del workspace (Cargo.toml).
 msrv = "1.100.0"
+
+# La simulación es determinista: el tiempo sale de `SimTime` y nunca del reloj del sistema.
+# OJO: este archivo es global al workspace (también aplica a heliarca-cli y heliarca-godot).
+disallowed-types = [
+    { path = "std::time::SystemTime", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+    { path = "std::time::Instant", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+]
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+    { path = "std::time::Instant::now", reason = "no determinista: usar heliarca_sim::time::SimTime" },
+]
