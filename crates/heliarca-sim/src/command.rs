@@ -3,7 +3,7 @@
 //!
 //! La UI, la CLI, la IA y el *autoplayer* no tocan el estado: envían [`Command`]s con
 //! [`Sim::submit_command`], que los **valida** contra el estado actual y los **encola**. Los
-//! comandos se **aplican al comienzo del siguiente paso** ([`Sim::step`]), en **orden de
+//! comandos se **aplican al comienzo del siguiente paso** ([`Sim::advance`]), en **orden de
 //! envío** (FIFO), nunca al enviarlos.
 //!
 //! # Contrato de un comando
@@ -14,6 +14,12 @@
 //!   mutar** y devolver el error sin haber cambiado nada: el `Sim` no puede deshacer efectos
 //!   parciales. Si falla, el error queda en el historial ([`CommandOutcome::Failed`]) y el resto
 //!   de la cola **se sigue aplicando**.
+//! - Un `apply` **no debe entrar en pánico**. Si lo hace, el comando y los que seguían en la cola
+//!   de ese paso se pierden **sin registro** en el historial y el paso no se cuenta (los
+//!   anteriores del paso sí quedaron aplicados y registrados). Ver [`Sim`] para el detalle.
+//! - Durante `validate`/`apply` el `Sim` está en pleno paso: la cola de pendientes está vacía
+//!   (salvo lo que se envíe en el propio paso), el historial no incluye el comando en curso y
+//!   [`Sim::time`] es el del comienzo del paso. Ver [`Sim`].
 //! - Un comando enviado desde dentro de un `apply` queda para el paso siguiente. Aun así, un
 //!   comando no debería enviar otros: queda en el historial como un envío más y un reproductor
 //!   lo reenviaría dos veces; las consecuencias de un comando son efectos, no comandos nuevos.
@@ -36,9 +42,7 @@
 //! 21 §2 «Datos y localización») más los datos de contexto de cada variante.
 //!
 //! ```
-//! use heliarca_sim::command::{Command, CommandError, CommandOutcome};
-//! use heliarca_sim::events::Payload;
-//! use heliarca_sim::sim::Sim;
+//! use heliarca_sim::{Command, CommandError, CommandOutcome, Increment, Payload, Scenario, Sim};
 //!
 //! #[derive(Debug)]
 //! struct Noop;
@@ -50,12 +54,12 @@
 //!     fn apply(&self, _sim: &mut Sim) -> Result<(), CommandError> { Ok(()) }
 //! }
 //!
-//! let mut sim = Sim::new(42);
+//! let mut sim = Sim::new(Scenario::default(), 42);
 //! sim.submit_command(Box::new(Noop))?;
 //! assert_eq!(sim.pending_command_count(), 1); // todavía no se aplicó
-//! sim.step();
+//! sim.advance(Increment::S5)?;
 //! assert_eq!(sim.command_history()[0].outcome, CommandOutcome::Applied);
-//! # Ok::<(), CommandError>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use std::collections::VecDeque;
@@ -202,7 +206,7 @@ pub(crate) struct Queued {
 
 /// Cola FIFO de comandos pendientes e historial de los procesados.
 #[derive(Debug, Default)]
-pub struct CommandQueue {
+pub(crate) struct CommandQueue {
     pending: VecDeque<Queued>,
     history: Vec<CommandRecord>,
     next_id: u32,
@@ -255,7 +259,17 @@ impl CommandQueue {
 mod tests {
     use super::*;
     use crate::events::{Event, EventKind, Interrupt, Value};
+    use crate::scenario::Scenario;
     use crate::time::Increment;
+
+    fn new_sim(seed: u64) -> Sim {
+        Sim::new(Scenario::default(), seed)
+    }
+
+    /// Un avance mínimo: aplica los pendientes.
+    fn tick(sim: &mut Sim) {
+        sim.advance(Increment::S5).unwrap();
+    }
 
     // Comandos de PRUEBA (no son comandos del juego). El «estado» observable son los eventos.
 
@@ -381,7 +395,7 @@ mod tests {
 
     #[test]
     fn comando_invalido_devuelve_error_y_no_deja_rastro() {
-        let mut sim = Sim::new(1);
+        let mut sim = new_sim(1);
         sim.submit_command(Box::new(Mark(7))).unwrap();
         let events_before: Vec<Event> = sim.events().iter().cloned().collect();
 
@@ -405,14 +419,14 @@ mod tests {
 
     #[test]
     fn enviar_no_aplica_se_aplica_al_comienzo_del_siguiente_paso_en_orden() {
-        let mut sim = Sim::new(1);
+        let mut sim = new_sim(1);
         for n in [3, 1, 2] {
             sim.submit_command(Box::new(Mark(n))).unwrap();
         }
         assert_eq!(sim.pending_command_count(), 3);
         assert!(markers(&sim).is_empty(), "no se aplica al enviar");
 
-        sim.step();
+        tick(&mut sim);
         assert_eq!(markers(&sim), [3, 1, 2], "orden de envío, no de valor");
         assert_eq!(sim.pending_command_count(), 0);
         let ids: Vec<u32> = sim.command_history().iter().map(|r| r.id.raw()).collect();
@@ -423,19 +437,19 @@ mod tests {
                 .all(|r| r.outcome == CommandOutcome::Applied && r.step == 0)
         );
         // Un paso vacío no agrega nada.
-        sim.step();
+        tick(&mut sim);
         assert_eq!(sim.command_history().len(), 3);
         assert_eq!(sim.steps(), 2);
     }
 
     #[test]
     fn un_comando_enviado_durante_apply_espera_al_paso_siguiente() {
-        let mut sim = Sim::new(1);
+        let mut sim = new_sim(1);
         sim.submit_command(Box::new(Spawner(5))).unwrap();
-        sim.step();
+        tick(&mut sim);
         assert_eq!(markers(&sim).len(), 0);
         assert_eq!(sim.pending_command_count(), 1);
-        sim.step();
+        tick(&mut sim);
         assert_eq!(markers(&sim), [5]);
         let steps: Vec<u64> = sim.command_history().iter().map(|r| r.step).collect();
         assert_eq!(steps, [0, 1]);
@@ -443,14 +457,14 @@ mod tests {
 
     #[test]
     fn fallo_al_aplicar_se_registra_no_muta_y_no_corta_la_cola() {
-        let mut sim = Sim::new(1);
+        let mut sim = new_sim(1);
         // Los tres validan en el envío (todavía no existe ningún marcador).
         sim.submit_command(Box::new(MarkOnce(1))).unwrap();
         sim.submit_command(Box::new(Mark(2))).unwrap();
         sim.submit_command(Box::new(MarkOnce(1))).unwrap();
         sim.submit_command(Box::new(Mark(3))).unwrap();
 
-        sim.step();
+        tick(&mut sim);
         assert_eq!(markers(&sim), [1, 2, 3], "el fallido no emitió nada");
         let history = sim.command_history();
         assert_eq!(history.len(), 4, "el fallido también queda registrado");
@@ -469,17 +483,23 @@ mod tests {
 
     #[test]
     fn el_historial_registra_kind_args_y_tiempos() {
-        let mut sim = Sim::new(1);
+        let mut sim = new_sim(1);
         sim.submit_command(Box::new(Mark(9))).unwrap();
-        sim.scheduler_mut().advance(Increment::H1).unwrap();
+        sim.advance(Increment::H1).unwrap(); // paso 0: aplica Mark(9) al comienzo (t = 0)
         sim.submit_command(Box::new(Mark(10))).unwrap();
-        sim.step();
+        tick(&mut sim); // paso 1: aplica Mark(10) con t = 3600
         let h = sim.command_history();
         assert_eq!(h[0].kind, "test.mark");
         assert_eq!(h[0].args.get("n"), Some(&Value::UInt(9)));
         assert_eq!(h[0].submitted_at, SimTime::ZERO);
+        assert_eq!(
+            h[0].applied_at,
+            SimTime::ZERO,
+            "se aplica al comienzo del paso"
+        );
+        assert_eq!((h[0].step, h[1].step), (0, 1));
         assert_eq!(h[1].submitted_at, SimTime::from_seconds(3600));
-        assert_eq!(h[0].applied_at, SimTime::from_seconds(3600));
+        assert_eq!(h[1].applied_at, SimTime::from_seconds(3600));
     }
 
     /// Reconstruye un comando de prueba desde su registro (lo que hará un registro de comandos).
@@ -499,42 +519,29 @@ mod tests {
     #[test]
     fn el_historial_permite_reproducir_la_partida() {
         // Partida en vivo: comandos entre pasos, con avance de tiempo, un fallo al aplicar y
-        // un comando que envía otro.
-        let mut live = Sim::new(99);
+        // un comando que envía otro. Cada paso es un `advance` con su incremento.
+        let increments = [Increment::D1, Increment::H1, Increment::S5, Increment::D5];
+        let mut live = new_sim(99);
         live.submit_command(Box::new(Mark(1))).unwrap();
         live.submit_command(Box::new(MarkOnce(2))).unwrap();
         live.submit_command(Box::new(MarkOnce(2))).unwrap(); // fallará al aplicar
-        live.step();
-        live.scheduler_mut().advance(Increment::D1).unwrap();
+        live.advance(increments[0]).unwrap();
         live.submit_command(Box::new(Mark(3))).unwrap();
         assert!(live.submit_command(Box::new(AlwaysInvalid)).is_err());
-        live.step();
-        live.step();
-        live.scheduler_mut().advance(Increment::H1).unwrap();
+        live.advance(increments[1]).unwrap();
+        live.advance(increments[2]).unwrap();
         live.submit_command(Box::new(Mark(4))).unwrap();
-        live.step();
+        live.advance(increments[3]).unwrap();
 
-        // Reproducción: misma semilla, mismo avance de tiempo, y cada registro reenviado
-        // antes del paso en que se aplicó.
-        let mut replay = Sim::new(live.seed());
+        // Reproducción: misma semilla, mismos incrementos, y cada registro reenviado antes
+        // del paso en que se aplicó.
+        let mut replay = new_sim(live.seed());
         let history = live.command_history().to_vec();
-        let advances = [
-            (0_u64, None),
-            (1, Some(Increment::D1)),
-            (3, Some(Increment::H1)),
-        ];
-        for step in 0..live.steps() {
-            for (at, inc) in advances {
-                if at == step
-                    && let Some(inc) = inc
-                {
-                    replay.scheduler_mut().advance(inc).unwrap();
-                }
-            }
+        for (step, increment) in (0..live.steps()).zip(increments) {
             for record in history.iter().filter(|r| r.step == step) {
                 replay.submit_command(rebuild(record)).unwrap();
             }
-            replay.step();
+            replay.advance(increment).unwrap();
         }
 
         assert_eq!(replay.steps(), live.steps());
