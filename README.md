@@ -180,6 +180,34 @@ Un test (`crates/heliarca-sim/tests/schemas.rs`, parte de `cargo test --workspac
 ### Tests de propiedades
 `heliarca-sim` usa [`proptest`](https://crates.io/crates/proptest) (sólo como dependencia de desarrollo) para comprobar propiedades del núcleo con entradas generadas. La central es que **avanzar 30 × `D1` equivale a avanzar 1 × `D30`**, comparando `Sim::state_hash()`; vive en `crates/heliarca-sim/tests/properties.rs` (API pública) y en `crates/heliarca-sim/src/partition_tests.rs` (con sistemas de prueba), y corre con `cargo test --workspace`. Los tests de propiedades son deterministas (semilla fija, 64 casos) y no escriben archivos en el repo. Para explorar más casos o reproducir un fallo: `PROPTEST_RNG_SEED=<u64> PROPTEST_CASES=<n> cargo test -p heliarca-sim`. El detalle (qué entra al hash y cómo agregar una propiedad) está en [CONTRIBUTING.md](CONTRIBUTING.md#tests-de-propiedades).
 
+### Benchmarks
+`heliarca-sim` mide el costo del avance con [`criterion`](https://crates.io/crates/criterion) (sólo como dependencia de desarrollo: no entra al árbol de `heliarca-sim`, `heliarca-cli` ni `heliarca-godot`). El código está en `crates/heliarca-sim/benches/advance.rs` y usa sólo la API pública (`Sim::new(Scenario::default(), semilla)` y `Sim::advance`).
+
+**Presupuesto** (doc 21 §1/§2): **1 año de juego en menos de 0,75 s** en modo sin interfaz, que equivale a **40 años en menos de 30 s**. Los benchmarks no hacen fallar nada si se pasan (los tiempos de un runner compartido son ruidosos, así que el CI sólo *compila* los benches, con `cargo clippy --workspace --all-targets`): sirven para detectar regresiones comparando contra una línea base.
+
+**Qué miden.** Avanzar el escenario por defecto, que está **vacío** (sin sistemas, comandos ni eventos): es la **línea base del núcleo** (planificador, tiempo, RNG, registro de eventos), no el juego real. Los sistemas que se vayan sumando agregan costo, y el presupuesto aplica al juego completo, así que un número chico acá no demuestra que el presupuesto se cumpla. La construcción del `Sim` no se cronometra. Benchmarks (nombres estables, no renombrar): `advance_1_year_d1` (365 × `D1`), `advance_1_year_d5` (73 × `D5`), `advance_40_years_d1` (14 600 × `D1`) y `advance_40_years_d5` (2 920 × `D5`). Cada uno tarda unos 3 s (calentamiento y 20 muestras).
+
+**Cómo correrlos.**
+
+```
+cargo bench -p heliarca-sim
+```
+
+Imprime en consola el tiempo de cada benchmark (`time: [mínimo estimado máximo]`) y deja los reportes en `target/criterion/` (ignorado por git): un HTML por benchmark (`target/criterion/<benchmark>/report/index.html`), el índice `target/criterion/report/index.html` y los datos en JSON (`target/criterion/<benchmark>/new/estimates.json`). `cargo bench` compila en release (perfil `bench`). `cargo test --workspace` NO ejecuta los benchmarks (el CI sólo los compila, por `clippy --all-targets`); para comprobar que no fallan sin medir nada, `cargo test -p heliarca-sim --benches` corre cada uno una sola vez (menos de 1 s en total). Ojo: criterion arrastra una dependencia que compila código C (`alloca`), así que para `cargo bench` y para compilar los benchmarks hace falta un compilador de C (en Windows lo trae el workload de C++ de los Build Tools; en Linux, `build-essential`).
+
+**Cómo comparar contra la línea base.** Criterion guarda cada corrida con un nombre y compara contra la que le pidas. Para medir un cambio:
+
+```
+git switch main
+cargo bench -p heliarca-sim -- --save-baseline principal   # guarda la línea base «principal»
+git switch mi-rama
+cargo bench -p heliarca-sim -- --baseline principal        # compara contra «principal»
+```
+
+Cada benchmark imprime `change: [-x% ±y% +z%]` y un veredicto (`Performance has improved`, `has regressed` o `No change in performance detected`; ojo: sólo es una regresión real si el intervalo no incluye 0 % y `p < 0.05`). Las líneas base viven en `target/criterion/` (si hacés `cargo clean` se pierden) y valen sólo en la misma máquina, sin otra carga: los tiempos entre máquinas o con la PC ocupada no son comparables, y cambios de ±30 % entre corridas idénticas son comunes en máquinas cargadas. `--save-baseline` también puede reemplazar una línea base existente; para sólo mirar sin comparar, `--load-baseline` y `--baseline` aceptan el nombre de una ya guardada. Un benchmark sin línea base previa (porque es nuevo) se mide igual, sin comparar.
+
+**Números medidos** (Windows 11, AMD Ryzen 7 6800H, Rust 1.100.0, `cargo bench`, con otros procesos de compilación en la máquina, así que son órdenes de magnitud, no valores precisos): `advance_1_year_d1` ≈ 6 µs, `advance_1_year_d5` ≈ 1 a 3 µs, `advance_40_years_d1` ≈ 0,23 ms y `advance_40_years_d5` ≈ 0,05 ms (concuerda con lo medido por la CLI: 40 años en menos de 1 ms en release). Contra el presupuesto, el escenario vacío usa unas 100 000 veces menos tiempo que 0,75 s por año (la diferencia entre el núcleo vacío y el presupuesto es el margen para los sistemas del juego).
+
 ### Correr los checks del CI en local
 Los scripts de [`scripts/ci/`](scripts/ci/) son los mismos que usa el CI. Necesitan `bash` (en Windows viene con Git for Windows, y se corren desde Git Bash) y se lanzan desde la raíz:
 
