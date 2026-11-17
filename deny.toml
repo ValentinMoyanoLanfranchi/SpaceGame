@@ -1,0 +1,53 @@
+# Política de dependencias (cargo-deny). Se verifica en CI (job build-test, Linux) con
+# `cargo deny check`: advisories (RustSec), licencias, fuentes y bans. Ver README.
+# Para correrlo localmente: `cargo install --locked cargo-deny` y `cargo deny check`.
+
+[graph]
+# Se evalúa el grafo completo, con todas las features, para no ocultar nada detrás de un flag.
+all-features = true
+
+[advisories]
+# Base de datos de RustSec. Necesita red: en CI se clona en cada corrida, así que un aviso
+# nuevo publicado en RustSec puede poner rojo un CI que ayer estaba verde (es intencional:
+# es justamente lo que queremos enterarnos).
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Avisos de seguridad y crates yanked: error. `unmaintained` aplica a las dependencias
+# directas del workspace (los transitivos se avisan sin romper).
+yanked = "deny"
+unmaintained = "workspace"
+# Excepciones: SOLO con id y motivo, y revisadas en PR.
+ignore = []
+
+[licenses]
+# Lista corta para un juego propietario: sólo licencias permisivas.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+# La lista es una política, no un inventario: no avisar por licencias aún sin usar.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Los crates del propio workspace son `UNLICENSED` + `publish = false`: no se evalúan.
+ignore = true
+
+[bans]
+# Dos versiones del mismo crate: aviso (no error) para no frenar por duplicados transitivos.
+multiple-versions = "warn"
+wildcards = "deny"
+# Las dependencias por path entre crates del workspace no llevan versión.
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+# Sólo crates.io: nada de registries alternativos ni dependencias por git.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
