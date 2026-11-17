@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 heliarca-sim = { path = "../heliarca-sim" }
+# Sin `color` (evita anstream/colorchoice/etc.) ni `suggestions`; sólo lo necesario para ayuda y errores.
+clap = { version = "4.6.8", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
+thiserror = { version = "2.0.21", default-features = false }
 
 [lints]
 workspace = true
