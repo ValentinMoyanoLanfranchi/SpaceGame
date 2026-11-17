@@ -1,1 +1,7 @@
-{}
+{
+  "command.error.event_log": "No se pudo registrar lo ocurrido en el historial de eventos. La acción no se completó.",
+  "command.error.ids_exhausted": "Se alcanzó el límite de órdenes que admite esta partida. No se pueden dar más.",
+  "command.error.invalid_argument": "Alguno de los valores indicados no es válido. Revísalo e inténtalo de nuevo.",
+  "command.error.invalid_target": "El objetivo elegido no existe o no sirve para esta orden.",
+  "command.error.not_allowed_now": "Esta orden no se puede dar en este momento."
+}
