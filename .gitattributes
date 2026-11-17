@@ -1,0 +1,3 @@
+# Los esquemas generados se comparan byte a byte en CI: siempre LF, sin conversion de autocrlf.
+data/schema/**/*.json text eol=lf
+data/schema/*.json text eol=lf

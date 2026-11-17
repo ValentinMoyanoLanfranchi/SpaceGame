@@ -43,6 +43,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -75,7 +76,7 @@ pub const DATA_FILES: [&str; 11] = [
 ];
 
 /// Forma de órbita de un cuerpo. El MVP sólo usa órbitas circulares (doc 22 §0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OrbitKind {
     /// Circular y coplanar (`e = 0`).
@@ -83,7 +84,7 @@ pub enum OrbitKind {
 }
 
 /// Órbita de un cuerpo (`orbit` en `bodies.json`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Orbit {
     /// Tipo de órbita (campo `type` en el JSON).
@@ -96,7 +97,7 @@ pub struct Orbit {
 }
 
 /// Yacimiento de un cuerpo (`deposits[]` en `bodies.json`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Deposit {
     /// Id de texto del bien (`good.*`).
@@ -108,7 +109,7 @@ pub struct Deposit {
 }
 
 /// Cuerpo celeste (entrada de `bodies.json`, doc 22 §11).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Body {
     /// Id de texto (`body.*`).
@@ -135,7 +136,7 @@ pub struct Body {
 
 /// Entrada mínima y extensible de los archivos cuyo esquema aún no está definido: sólo exige `id`
 /// y conserva el resto de los campos tal cual (en un `BTreeMap`, orden estable).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 pub struct Entry {
     /// Id de texto estable (`good.hierro`, `tech.pro_0_1`...).
     pub id: String,

@@ -51,13 +51,46 @@
 
 use std::fmt;
 
-use serde_json::Value;
+use schemars::Schema;
+use serde_json::{Value, json};
 
 use crate::schedule::{DAYS_PER_MONTH, DAYS_PER_WEEK};
 use crate::time::DAYS_PER_YEAR;
 
 /// Campos de `params.json`, en el orden en que se leen e informan.
 const FIELDS: [&str; 3] = ["days_per_week", "days_per_month", "days_per_year"];
+
+/// Esquema JSON de `params.json` (ver `crate::schema`). `Params` se parsea a mano (para dar
+/// mensajes en español), así que su esquema se arma a mano, pero **desde los mismos datos que el
+/// cargador**: la lista de campos (`FIELDS`: obligatorios, sin campos desconocidos) y
+/// [`Params::MAX_DAYS`]. Agregar un parámetro a `FIELDS` lo agrega al esquema.
+///
+/// No expresa `days_per_week <= days_per_month <= days_per_year`: es validación semántica del
+/// cargador (JSON Schema no compara campos entre sí). Tampoco coincide con el cargador en `7.0`
+/// (entero para el esquema; `as_u64` del cargador lo rechaza).
+pub(crate) fn json_schema() -> Schema {
+    let mut properties = serde_json::Map::new();
+    for field in FIELDS {
+        properties.insert(
+            field.to_owned(),
+            json!({
+                "description": format!("Parámetro de días `{field}` (entero entre 1 y {}).", Params::MAX_DAYS),
+                "type": "integer",
+                "minimum": 1,
+                "maximum": Params::MAX_DAYS,
+            }),
+        );
+    }
+    schemars::json_schema!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Params",
+        "description": "Parámetros globales del juego (`data/params.json`, doc 22 §0). Todos son obligatorios; no se admiten campos desconocidos. Además debe cumplirse days_per_week <= days_per_month <= days_per_year (lo valida el cargador).",
+        "type": "object",
+        "properties": properties,
+        "required": FIELDS,
+        "additionalProperties": false,
+    })
+}
 
 /// Un parámetro inválido: su nombre y qué le pasa. `Display`: `days_per_month: debe ser >= 1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
