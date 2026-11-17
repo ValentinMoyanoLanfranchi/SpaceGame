@@ -46,3 +46,9 @@ Qué trae la configuración de [`.cargo/config.toml`](.cargo/config.toml) y del 
 - **Alias:** `cargo c` (`check` de todo el workspace), `cargo t` (`test` de todo el workspace) y `cargo l` (el mismo `clippy -D warnings` del CI).
 - **Dependencias optimizadas:** `[profile.dev.package."*"] opt-level = 3` compila las dependencias externas con optimizaciones aunque el código propio vaya en debug. Hoy el workspace no tiene dependencias externas, así que **todavía no tiene efecto medible**; está puesto para cuando entren `godot` y otras.
 - **Linker rápido:** no está activado. `rust-lld` ya viene con el toolchain y lo probé (`CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe`), pero con los crates actuales no mejora nada (~0,47 s completa y ~0,5 s incremental, igual que `link.exe`), y `config.toml` no puede activarlo "solo si está instalado" sin romper el CI o a quien no lo tenga. Cómo probarlo localmente está comentado en el propio `config.toml`; conviene volver a medir cuando haya dependencias pesadas.
+
+## Dependencias y auditoría (cargo-deny)
+
+[`deny.toml`](deny.toml) define la política: licencias permisivas (MIT, Apache-2.0, BSD, ISC, Unicode-3.0, Zlib), fuentes solo de crates.io, versiones duplicadas en aviso y avisos de RustSec (o crates yanked) como error. El job `build-test` de Linux corre `cargo-deny check` con un binario oficial fijado por versión y SHA-256. Localmente: `cargo install --locked cargo-deny` y `cargo deny check`. `cargo-audit` no se usa: usa la misma base de RustSec y `cargo-deny` ya la cubre.
+
+El CI baja la base de RustSec en cada corrida, así que un aviso nuevo sobre una dependencia que ya teníamos puede poner rojo el CI sin que cambie nada en el repo. Es a propósito; se arregla actualizando la dependencia o, si no hay arreglo, con una entrada en `advisories.ignore` de `deny.toml` con id y motivo, revisada en un PR.
