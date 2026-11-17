@@ -16,7 +16,7 @@ fallar() { echo "ERROR: $*" >&2; exit 1; }
 if ! arbol="$(cd "$raiz" && cargo tree --locked -p heliarca-sim --edges normal,build,dev \
     --all-features --target all --prefix none 2>&1)"; then
   echo "$arbol" >&2
-  fallar "'cargo tree -p heliarca-sim' falló; no se pudo comprobar el aislamiento."
+  fallar "'cargo tree -p heliarca-sim' falló (¿Cargo.lock desactualizado?); no se pudo comprobar el aislamiento."
 fi
 
 # Primera columna de cada línea = nombre del crate.
