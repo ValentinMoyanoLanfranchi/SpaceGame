@@ -56,7 +56,7 @@ La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así q
 ### Ejecutar la CLI
 `cargo run -p heliarca-cli -- --help` lista los subcomandos y opciones del ejecutable sin interfaz (los argumentos van después de `--`):
 
-- `run`: avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real (ver [Correr la simulación](#correr-la-simulación)).
+- `run`: avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real (ver [Correr la simulación](#correr-la-simulación)); con `--script <archivo>` envía además los comandos de un script JSON (ver [Scripts de comandos](#scripts-de-comandos)).
 - `validate-data`: valida los datos de `--data-dir` (ver [Validar los datos](#validar-los-datos)).
 - Opciones globales: `--seed <u64>` (por defecto `0`) y `--data-dir <ruta>` (por defecto `data`).
 - Sin subcomando imprime un banner con la versión del núcleo y la fecha inicial (`heliarca-cli (sim 0.1.0) - Año 1, día 1, 00:00:00`).
@@ -87,6 +87,63 @@ Opciones de `run` (además de `--seed` y `--data-dir`):
 Los datos se cargan con la misma política completa que `validate-data` (archivos más registro de ids y referencias); si fallan, los errores salen por stderr, uno por línea, con código 1. Las líneas de la salida son estables y parseables (`Clave: valor`); todas salvo `Duración real` son deterministas: misma semilla, años e incremento dan el mismo hash. El hash incluye el estado interno (semilla/RNG...) pero **no** el contador de pasos: la misma partida avanzada con otros incrementos (p. ej. 30×`d1` o 1×`d30`) da el mismo hash, aunque `Pasos` difiera.
 
 **Duración real y línea base de rendimiento.** Es el tiempo de pared del bucle de avance (sin la carga de datos), con tres decimales y coma decimal (`0,002 s`); si el tiempo es mayor que 0 se agregan los pasos por segundo (`(7300000 pasos/s)`), útil cuando la corrida es tan corta que el tiempo no tiene resolución. Se mide sólo en la CLI (`crates/heliarca-cli/src/timing.rs`) y no entra a la simulación ni al hash. Es la línea base para el criterio «40 años de juego en menos de 30 s» (doc 21 §1). Con el escenario actual (vacío, sin sistemas), 40 años a `d1` tardan en una máquina de desarrollo con Windows 11: 0,002 s en debug (`cargo run -p heliarca-cli -- run --years 40 --seed 1`) y menos de 1 ms en release (`cargo run --release -p heliarca-cli -- run --years 40 --seed 1`); a `s5` (252 millones de pasos en 40 años) tarda unos 3,9 s en release. **Ojo con los incrementos chicos y muchos años:** el costo es lineal en los pasos; `--years 10000 --increment s5` (≈6,3 mil millones de pasos) tarda unos 16 minutos. No hay tope por eso: elegí el incremento según lo que necesites medir. Son números de referencia que irán subiendo cuando existan los sistemas; el presupuesto se vigila contra el criterio de 30 s, no contra estos valores.
+
+### Scripts de comandos
+`run --script <archivo>` envía comandos a la simulación en momentos dados, para repetir una partida exacta. El script es un JSON **versionado**; el del repo es [`examples/script-ejemplo.json`](examples/script-ejemplo.json):
+
+```json
+{
+  "version": 1,
+  "commands": [
+    { "at": 0, "command": { "kind": "debug.mark", "args": { "label": "inicio de la corrida" } } },
+    { "at": 30, "command": { "kind": "debug.mark", "args": { "label": "un mes después" } } },
+    { "at": 30, "command": { "kind": "debug.mark", "args": { "label": "mismo día, se envía después" } } }
+  ]
+}
+```
+
+`cargo run -p heliarca-cli -- run --years 1 --seed 3 --script examples/script-ejemplo.json` agrega a la salida la línea `Script` (después de `Incremento`) y `Comandos aplicados` (después de `Pasos`); sin `--script` esas líneas no aparecen:
+
+```
+Años simulados: 1
+Semilla: 3
+Incremento: d1
+Script: examples/script-ejemplo.json (3 comandos)
+Pasos: 365
+Comandos aplicados: 3
+Fecha final: Año 2, día 1, 00:00:00
+Eventos: 3
+Hash de estado: <32 hex>
+Duración real: 0,003 s (121666 pasos/s)
+```
+
+**Formato (versión 1).**
+
+- La raíz es un objeto con `version` (hoy sólo `1`; otra versión es un error claro) y `commands` (una lista, que puede ser vacía). Se eligió un objeto y no la lista pelada para poder migrar el formato sin ambigüedad.
+- `at`: **días simulados desde el inicio de la corrida**, entero ≥ 0 (`0` es el comienzo; un día son 86 400 s de simulación). Las entradas van **ordenadas por `at`**; las que comparten `at` se envían en el orden del archivo.
+- `command.kind` es el nombre del comando y `command.args` un objeto con sus argumentos (opcional si el comando no tiene). Valores admitidos: texto, booleanos y enteros; sin decimales, `null`, listas ni objetos anidados.
+- Cualquier campo desconocido es error, en cualquier nivel.
+
+**Comandos disponibles.** Hoy sólo `debug.mark` (`label`: texto de 1 a 64 caracteres, sin caracteres de control), que deja un evento `DebugMark` en el registro. Es **infraestructura de diagnóstico y pruebas, no mecánica del juego**: existe para tener algo real que enviar y reproducir hasta que el diseño del MVP defina los comandos del juego. El catálogo de comandos conocidos es `heliarca_sim::CommandRegistry`, que construye cada comando desde su `kind` y sus argumentos (la misma pareja que guarda el historial, así que el historial se puede reinyectar).
+
+**Cuándo se aplica cada comando.** El bucle avanza la simulación hasta el día `at` y **envía** el comando (`Sim::submit_command`, que lo valida contra el estado); el comando se **aplica al comienzo del paso siguiente**, como siempre. Un `at` debe ser **menor** que los días simulados (`--years` × 365): un comando en el último instante nunca llegaría a aplicarse.
+
+**Reproducibilidad.** El mismo script con la misma semilla, años e incremento da el mismo hash; otra semilla, otro script (otro `at`, texto u orden) o el mismo script con otro incremento (el historial guarda en qué paso se aplicó cada comando) dan otro. Un script vacío da el mismo hash que no usar script.
+
+**Errores.** Todo el script se lee, valida y construye **antes** de correr: un error de forma no deja una corrida a medias. Las entradas se numeran **desde 1** (`entrada 3` es la tercera de `commands`) y el mensaje nombra el archivo, la entrada y el campo; sale con código `1` y sin resultados en stdout:
+
+```
+$ cargo run -p heliarca-cli -- run --script malo.json
+error: script malo.json: entrada 3: campo command.kind: comando desconocido: flota.crear (conocidos: debug.mark)
+error: script malo.json: entrada 2: campo at: fuera de orden: 4 es anterior a 5 de la entrada 1
+error: script malo.json: entrada 1: campo command.args.extra: argumento desconocido: «extra»
+error: script malo.json: entrada 1: campo at: 400 está fuera de la corrida: debe ser menor que 365 (los días simulados)
+error: script malo.json: campo version: versión no soportada: 2 (esta CLI sólo entiende la versión 1)
+error: script malo.json: JSON malformado en la línea 4, columna 0: EOF while parsing a list
+error: script malo.json: no se pudo leer: ... (archivo inexistente, ilegible, que no es UTF-8 o de más de 16 MiB)
+```
+
+(Cada línea es un caso distinto; se informa el primer problema.) Hay dos errores que sólo se conocen corriendo: un comando que `validate` rechaza al enviarse y uno que falla al aplicarse (`CommandOutcome::Failed`): ambos detienen la corrida con código `1` y el mensaje indica la entrada (`entrada N (kind): ...`), porque una corrida reproducible no puede seguir en silencio sin un comando del script. `--script` sin valor es un error de uso (código `2`).
 
 ### Validar los datos
 `cargo run -p heliarca-cli -- validate-data [--data-dir <ruta>]` revisa los archivos de datos (por defecto `data/`) y lista **todos** los errores de una corrida, no sólo el primero. Cada archivo pasa, como mucho, por una de estas fuentes, así que un problema nunca se informa dos veces:

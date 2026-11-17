@@ -29,9 +29,9 @@
 //! Cada comando procesado deja un [`CommandRecord`] (append-only, en orden de aplicación) con su
 //! `kind` y sus argumentos como [`Payload`] (datos planos, serializables más adelante), el paso
 //! y el instante de aplicación y el resultado. Con la misma semilla, reenviar esos registros en
-//! los mismos pasos (`record.step`) y en el mismo orden reproduce el mismo estado. Reconstruir
-//! un comando a partir de `kind` + `args` (registro de comandos) y serializar el historial son
-//! trabajo posterior. El hash de estado ([`Sim::state_hash`]) cubre cola e historial.
+//! los mismos pasos (`record.step`) y en el mismo orden reproduce el mismo estado. Un comando se
+//! reconstruye con [`crate::CommandRegistry::build`] a partir de `kind` + `args`; serializar el
+//! historial es trabajo posterior. El hash de estado ([`Sim::state_hash`]) cubre cola e historial.
 //!
 //! Los envíos rechazados por `validate` **no** se registran: no cambiaron nada.
 //!
@@ -70,6 +70,7 @@ use thiserror::Error;
 use crate::define_id;
 use crate::events::{EventError, Payload};
 use crate::ids::EntityId;
+use crate::invariants::{FnInvariant, Violation, entity_command};
 use crate::sim::Sim;
 use crate::time::SimTime;
 
@@ -204,6 +205,126 @@ pub(crate) struct Queued {
     pub(crate) command: Box<dyn Command>,
 }
 
+/// Invariantes de la cola y el historial de comandos (ver el módulo `invariants`).
+pub(crate) const INVARIANTS: &[FnInvariant] = &[
+    FnInvariant::new("commands.ids_increasing", check_ids_increasing),
+    FnInvariant::new("commands.next_id_above", check_next_id_above),
+    FnInvariant::new("commands.history_ordered", check_history_ordered),
+    FnInvariant::new("commands.pending_ordered", check_pending_ordered),
+];
+
+/// Ids de todos los comandos conocidos en orden de proceso: historial y luego cola.
+fn ids_in_order(queue: &CommandQueue) -> impl Iterator<Item = u32> + '_ {
+    queue
+        .history
+        .iter()
+        .map(|record| record.id.raw())
+        .chain(queue.pending.iter().map(|queued| queued.id.raw()))
+}
+
+/// Los ids son estrictamente crecientes en el orden de proceso (historial, luego cola): ninguno
+/// se repite ni se reordena.
+fn check_ids_increasing(sim: &Sim) -> Result<(), Violation> {
+    let mut previous: Option<u32> = None;
+    for id in ids_in_order(sim.commands()) {
+        if let Some(before) = previous.filter(|&before| id <= before) {
+            return Err(Violation::new(
+                "commands.ids_increasing",
+                Some(entity_command(id)),
+                format!(
+                    "el comando {} aparece después del {} en el orden de proceso: los ids deben ser estrictamente crecientes",
+                    entity_command(id),
+                    entity_command(before)
+                ),
+            ));
+        }
+        previous = Some(id);
+    }
+    Ok(())
+}
+
+/// `next_id` es mayor que todo id ya asignado (así nunca se reutiliza uno).
+fn check_next_id_above(sim: &Sim) -> Result<(), Violation> {
+    let next_id = sim.commands().next_id;
+    if let Some(id) = ids_in_order(sim.commands()).find(|&id| id >= next_id) {
+        return Err(Violation::new(
+            "commands.next_id_above",
+            Some("commands.next_id".to_owned()),
+            format!(
+                "el próximo id de comando es {next_id}, pero {} ya fue asignado",
+                entity_command(id)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// El historial está en orden de aplicación: `step` y `applied_at` no decrecen, y cada comando
+/// se aplicó en o después de su envío.
+fn check_history_ordered(sim: &Sim) -> Result<(), Violation> {
+    let mut previous: Option<&CommandRecord> = None;
+    for record in &sim.commands().history {
+        let entity = Some(entity_command(record.id.raw()));
+        if record.applied_at < record.submitted_at {
+            return Err(Violation::new(
+                "commands.history_ordered",
+                entity,
+                format!(
+                    "se aplicó a los {} s, antes de su envío ({} s)",
+                    record.applied_at.as_seconds(),
+                    record.submitted_at.as_seconds()
+                ),
+            ));
+        }
+        if let Some(before) = previous
+            && (record.step < before.step || record.applied_at < before.applied_at)
+        {
+            return Err(Violation::new(
+                "commands.history_ordered",
+                entity,
+                format!(
+                    "el historial no está en orden de aplicación: paso {} a los {} s después de {} (paso {}, {} s)",
+                    record.step,
+                    record.applied_at.as_seconds(),
+                    entity_command(before.id.raw()),
+                    before.step,
+                    before.applied_at.as_seconds()
+                ),
+            ));
+        }
+        previous = Some(record);
+    }
+    Ok(())
+}
+
+/// La cola está en orden de envío y nada se envió en el futuro.
+fn check_pending_ordered(sim: &Sim) -> Result<(), Violation> {
+    let mut previous: Option<SimTime> = None;
+    for queued in &sim.commands().pending {
+        let entity = Some(entity_command(queued.id.raw()));
+        if queued.submitted_at > sim.time() {
+            return Err(Violation::new(
+                "commands.pending_ordered",
+                entity,
+                format!(
+                    "se envió a los {} s, pero el tiempo actual es {} s",
+                    queued.submitted_at.as_seconds(),
+                    sim.time().as_seconds()
+                ),
+            ));
+        }
+        if previous.is_some_and(|before| queued.submitted_at < before) {
+            return Err(Violation::new(
+                "commands.pending_ordered",
+                entity,
+                "la cola no está en orden de envío (instante de envío decreciente)",
+            ));
+        }
+        previous = Some(queued.submitted_at);
+    }
+    Ok(())
+}
+
 /// Cola FIFO de comandos pendientes e historial de los procesados.
 #[derive(Debug, Default)]
 pub(crate) struct CommandQueue {
@@ -263,6 +384,14 @@ impl CommandQueue {
 
     pub(crate) fn history(&self) -> &[CommandRecord] {
         &self.history
+    }
+
+    /// Cola, historial y próximo id (escritura): para corromperlos en los tests de invariantes.
+    #[cfg(test)]
+    pub(crate) fn parts_for_test(
+        &mut self,
+    ) -> (&mut VecDeque<Queued>, &mut Vec<CommandRecord>, &mut u32) {
+        (&mut self.pending, &mut self.history, &mut self.next_id)
     }
 }
 

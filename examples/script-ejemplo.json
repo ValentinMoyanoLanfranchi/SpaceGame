@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "commands": [
+    { "at": 0, "command": { "kind": "debug.mark", "args": { "label": "inicio de la corrida" } } },
+    { "at": 30, "command": { "kind": "debug.mark", "args": { "label": "un mes después" } } },
+    { "at": 30, "command": { "kind": "debug.mark", "args": { "label": "mismo día, se envía después" } } }
+  ]
+}

@@ -61,6 +61,12 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
 4. El jugador actúa por **comandos**; la UI lee **modelos de vista**, no el estado interno.
 5. IDs tipados y arenas; errores con `Result`; `clippy` y `rustfmt` obligatorios.
 
+## Comandos y scripts
+- Un comando nuevo implementa `heliarca_sim::Command` y se **registra** en `CommandRegistry::builtin` (`crates/heliarca-sim/src/command_registry.rs`) con su `kind` (`dominio.verbo`) y un constructor desde `Payload`: así la CLI (`run --script`) y los reproductores de historial pueden reconstruirlo a partir de `kind` + `args`. El constructor valida sólo la **forma** de los argumentos (con `CommandBuildError`); la validez contra el estado va en `Command::validate`/`apply`. Un test debe comprobar `build(c.kind(), &c.args())`.
+- `debug.mark` es infraestructura de diagnóstico, no mecánica del juego: no la uses para modelar nada del diseño.
+- Agregar una variante de `EventKind` requiere su tag en `state_hash.rs` (`write_kind`); un tag nuevo no cambia los hashes de estados que no la usan, así que no sube `FORMAT_VERSION`.
+- Formato de los scripts de `run --script` (versión, `at` en días, orden, posiciones de error): README, sección «Scripts de comandos». Si cambia el formato, subí `version` y mantené el mensaje de versión desconocida. El script de ejemplo es `examples/script-ejemplo.json` y lo corre un test.
+
 ## Tests de propiedades
 Los tests de propiedades usan `proptest` (dev-dependency de `heliarca-sim`, con `default-features = false` y sólo `std`; no entra al código de producción ni a `heliarca-godot`). Hay dos niveles:
 
@@ -85,6 +91,15 @@ PROPTEST_RNG_SEED=12345 PROPTEST_CASES=2000 cargo test -p heliarca-sim --test pr
 ```
 
 `PROPTEST_RNG_SEED` (un `u64`) fija la semilla; `PROPTEST_CASES`, la cantidad de casos; el resto de las variables `PROPTEST_*` también se respetan. Cuando una corrida con otra semilla falla, esa semilla más el caso mínimo son suficientes para reproducirlo.
+
+## Invariantes del simulador
+Un **invariante** es una regla que el estado de `Sim` cumple siempre entre dos pasos (el tiempo no retrocede, los ids de evento son secuenciales, cada causa es anterior a su efecto, los ids de comando crecen...). Es la **red de seguridad** del doc 21 §2 y §4 («no se crean ni destruyen recursos sin receta» será uno más cuando haya recursos): detecta errores de programación que corromperían el estado, **no** valida entradas del jugador (eso es `Command::validate`).
+
+- **API:** `Sim::check_invariants() -> Result<(), Violation>` devuelve la **primera** violación; `Violation` dice el invariante (nombre estable `dominio.regla`, p. ej. `time.monotonic`), la entidad (`event#7`, `command#3`, `system.<id>`, `sim.time`) y el detalle en español. El trait `Invariant` es interno al crate a propósito: el catálogo crece con cada módulo y no debe quedar fijado en la API pública.
+- **Cuándo corre solo:** `Sim::advance` lo corre antes y después de cada paso **sólo** en tests y compilaciones con `debug_assertions` y devuelve `AdvanceError::InvariantViolated`. En release **no** corre (costo cero). Cada chequeo es O(estado): es para desarrollo, no para cada cuadro. No corre en `Sim::new` ni en `Sim::submit_command`.
+- **Agregar un invariante:** en el módulo dueño del estado, una función `fn check_xxx(sim: &Sim) -> Result<(), Violation>` y una entrada en su constante `INVARIANTS` (`FnInvariant::new("modulo.nombre", check_xxx)`). El nombre es estable y no se renombra. Tiene que ser barato, determinista y sin efectos (sin `HashMap`, sin `unwrap`/`panic!`). Agregá un test `cfg(test)` que corrompa el estado a propósito (hay helpers `*_for_test`) y verifique nombre y entidad exactos. El módulo nuevo se suma a `invariants::all`.
+- **Estado que el chequeo necesita recordar** (como el mojón de tiempo de `time.monotonic`) es contabilidad derivada: **no** entra al hash de estado (ver «Qué es "estado"...» arriba); verificá que `state_hash()` no cambie.
+- Detalle y política completos en el módulo interno `crates/heliarca-sim/src/invariants.rs`.
 
 ## Alcance
 La lista de **excluidos del MVP** (doc 21 §1) es una regla: combate, espionaje, mercados grises, varias especies, diplomacia con líderes, regiones en la Tierra, órbitas elípticas, etc. Cualquier idea nueva va al backlog posterior, no al MVP.

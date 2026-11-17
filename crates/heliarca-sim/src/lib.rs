@@ -11,6 +11,7 @@
 //! | Actuar | [`Sim::submit_command`]: valida y encola un [`Command`]; se aplica en el siguiente avance |
 //! | Avanzar | [`Sim::advance`]`(`[`Increment`]`)`: aplica los comandos, avanza por tramos y se detiene en la primera interrupción; devuelve un [`AdvanceResult`] |
 //! | Leer eventos | [`Sim::poll_events`] (novedades) / [`Sim::events`] (todo el registro) |
+//! | Verificar | [`Sim::check_invariants`]: red de seguridad; devuelve la primera [`Violation`] (invariante y entidad). [`Sim::advance`] la corre sola en tests y debug |
 //! | Consultar | [`Sim::time`], [`Sim::date`], [`Sim::seed`], [`Sim::params`], [`Sim::steps`], [`Sim::command_history`]... |
 //!
 //! ```
@@ -75,6 +76,10 @@
 //! use heliarca_sim::rng::Rng;
 //! ```
 //!
+//! ```compile_fail,E0603
+//! use heliarca_sim::invariants::Invariant;
+//! ```
+//!
 //! Tampoco se puede tocar el estado interno de un `Sim` (sus campos son privados):
 //!
 //! ```compile_fail,E0616
@@ -96,9 +101,11 @@
 #[allow(dead_code)]
 mod arena;
 mod command;
+mod command_registry;
 pub mod data;
 mod events;
 pub mod ids;
+mod invariants;
 mod loc;
 mod params;
 #[cfg(test)]
@@ -119,9 +126,11 @@ mod state_hash;
 mod time;
 
 pub use command::{Command, CommandError, CommandId, CommandOutcome, CommandRecord};
+pub use command_registry::{CommandBuildError, CommandRegistry, MAX_MARK_LABEL_CHARS};
 pub use events::{
     CausalChain, Event, EventError, EventId, EventKind, EventLog, Interrupt, Payload, Value,
 };
+pub use invariants::Violation;
 pub use loc::{LOC_DOMAINS, Loc, is_valid_key};
 pub use params::{Params, ParamsError};
 pub use scenario::Scenario;

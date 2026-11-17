@@ -30,6 +30,8 @@ use std::fmt;
 
 use crate::define_id;
 use crate::ids::EntityId;
+use crate::invariants::{FnInvariant, Violation, entity_event};
+use crate::sim::Sim;
 use crate::time::SimTime;
 
 define_id! {
@@ -60,6 +62,8 @@ pub enum EventKind {
     InternalCrisis,
     /// Se cruzó el punto de salto.
     JumpPointCrossed,
+    /// Marca de diagnóstico del comando `debug.mark` (infraestructura de pruebas, no del juego).
+    DebugMark,
 }
 
 /// Efecto del evento sobre el avance del tiempo (doc 01 «Interrupciones»).
@@ -191,6 +195,111 @@ impl fmt::Display for EventError {
 
 impl std::error::Error for EventError {}
 
+/// Invariantes del registro de eventos (ver el módulo `invariants`).
+pub(crate) const INVARIANTS: &[FnInvariant] = &[
+    FnInvariant::new("events.sequential_ids", check_sequential_ids),
+    FnInvariant::new("events.causes_precede", check_causes_precede),
+    FnInvariant::new("events.not_in_future", check_not_in_future),
+    FnInvariant::new("events.cursor_in_range", check_cursor_in_range),
+];
+
+/// El id de cada evento es su posición en el log (secuencial desde 0, sin huecos ni repetidos).
+fn check_sequential_ids(sim: &Sim) -> Result<(), Violation> {
+    for (index, event) in sim.events().iter().enumerate() {
+        if usize::try_from(event.id.raw()).ok() != Some(index) {
+            return Err(Violation::new(
+                "events.sequential_ids",
+                Some(entity_event(event.id.raw())),
+                format!(
+                    "el evento en la posición {index} del registro tiene id {}; los ids deben ser secuenciales desde 0 (id = posición)",
+                    event.id.raw()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// La causa de un evento existe, tiene un id **menor** y ocurrió en un instante **≤**.
+fn check_causes_precede(sim: &Sim) -> Result<(), Violation> {
+    let log = sim.events();
+    for event in log {
+        let Some(cause) = event.cause else { continue };
+        let entity = Some(entity_event(event.id.raw()));
+        if cause.raw() >= event.id.raw() {
+            return Err(Violation::new(
+                "events.causes_precede",
+                entity,
+                format!(
+                    "la causa {} no es anterior al evento: su id debe ser menor",
+                    entity_event(cause.raw())
+                ),
+            ));
+        }
+        match log.get(cause) {
+            None => {
+                return Err(Violation::new(
+                    "events.causes_precede",
+                    entity,
+                    format!(
+                        "la causa {} no existe en el registro",
+                        entity_event(cause.raw())
+                    ),
+                ));
+            }
+            Some(parent) if parent.time > event.time => {
+                return Err(Violation::new(
+                    "events.causes_precede",
+                    entity,
+                    format!(
+                        "la causa {} ocurrió a los {} s, después del evento ({} s)",
+                        entity_event(cause.raw()),
+                        parent.time.as_seconds(),
+                        event.time.as_seconds()
+                    ),
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Ningún evento ocurre después del instante actual de la simulación.
+fn check_not_in_future(sim: &Sim) -> Result<(), Violation> {
+    for event in sim.events() {
+        if event.time > sim.time() {
+            return Err(Violation::new(
+                "events.not_in_future",
+                Some(entity_event(event.id.raw())),
+                format!(
+                    "el evento ocurrió a los {} s, pero el tiempo actual es {} s",
+                    event.time.as_seconds(),
+                    sim.time().as_seconds()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// El cursor de consumo no pasa del final del log.
+fn check_cursor_in_range(sim: &Sim) -> Result<(), Violation> {
+    let log = sim.events();
+    if log.cursor > log.events.len() {
+        return Err(Violation::new(
+            "events.cursor_in_range",
+            Some("events.cursor".to_owned()),
+            format!(
+                "el cursor de consumo ({}) supera la cantidad de eventos ({})",
+                log.cursor,
+                log.events.len()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Registro append-only de eventos con cursor de consumo.
 #[derive(Debug, Clone, Default)]
 pub struct EventLog {
@@ -209,6 +318,18 @@ impl EventLog {
             cursor: _cursor_de_la_interfaz,
         } = self;
         events
+    }
+
+    /// Eventos (escritura): para corromper el log en los tests de invariantes.
+    #[cfg(test)]
+    pub(crate) fn events_for_test(&mut self) -> &mut Vec<Event> {
+        &mut self.events
+    }
+
+    /// Cursor (escritura): para los tests de invariantes.
+    #[cfg(test)]
+    pub(crate) fn cursor_for_test(&mut self) -> &mut usize {
+        &mut self.cursor
     }
 
     /// Log vacío.
