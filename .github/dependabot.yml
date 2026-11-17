@@ -7,4 +7,18 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(ci)"
-  # El ecosistema "cargo" se agrega en la tarea M0.1.2 (cuando exista Cargo.toml).
+  # Dependencias de Rust. Un único Cargo.toml raíz (workspace) cubre todos los crates
+  # y su Cargo.lock, por eso alcanza con directory "/".
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Los minor/patch llegan juntos en un solo PR; los major quedan en PRs individuales.
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
