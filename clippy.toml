@@ -1,0 +1,2 @@
+# Debe coincidir con rust-version del workspace (Cargo.toml).
+msrv = "1.100.0"

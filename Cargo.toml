@@ -9,3 +9,25 @@ edition = "2024"
 rust-version = "1.100.0"
 license = "UNLICENSED"
 publish = false
+
+# Lints compartidos; cada crate los hereda con `[lints] workspace = true`.
+# - Se usa el grupo `pedantic` completo en warn (prioridad -1, para que los allows lo venzan)
+#   y se silencia solo lo que es ruido para este proyecto, en vez de mantener una lista blanca.
+# - `unsafe_code = "deny"` es la base para todos los crates (se puede relajar con `#[allow]`
+#   puntual, p. ej. en el FFI de heliarca-godot). `heliarca-sim` sube a `forbid` con
+#   `#![forbid(unsafe_code)]` en su lib.rs: Cargo no permite mezclar `workspace = true` con
+#   claves propias en `[lints]`, y `forbid` no se puede relajar ni con `#[allow]`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+unused_import_braces = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Ruido: obliga a renombrar tipos como `sim::SimState`; los nombres explicitos son preferibles.
+module_name_repetitions = "allow"
