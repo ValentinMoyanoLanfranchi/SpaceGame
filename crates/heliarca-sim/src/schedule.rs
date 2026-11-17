@@ -357,6 +357,28 @@ impl Scheduler {
         (*time, systems)
     }
 
+    /// `(instante, cantidad de sistemas)` para el guardado. Desestructura **sin `..`**: un campo
+    /// nuevo obliga a decidir si se guarda. Los sistemas son código y no se serializan (el
+    /// guardado se niega si hay alguno); `params` es copia de los del `Sim`, que se guardan aparte.
+    pub(crate) fn save_parts(&self) -> (SimTime, usize) {
+        let Self {
+            time,
+            params: _copia_de_los_params_del_sim,
+            systems,
+        } = self;
+        (*time, systems.len())
+    }
+
+    /// Planificador sin sistemas, en el instante `time` y con las cadencias de `params`
+    /// (para cargar un guardado).
+    pub(crate) fn from_save_parts(time: SimTime, params: Params) -> Self {
+        Self {
+            time,
+            params,
+            systems: Vec::new(),
+        }
+    }
+
     /// Sistemas registrados, en orden de ejecución (prioridad, id), para el hash de estado.
     pub(crate) fn systems(&self) -> &[Box<dyn System>] {
         &self.systems

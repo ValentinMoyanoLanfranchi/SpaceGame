@@ -101,5 +101,14 @@ Un **invariante** es una regla que el estado de `Sim` cumple siempre entre dos p
 - **Estado que el chequeo necesita recordar** (como el mojón de tiempo de `time.monotonic`) es contabilidad derivada: **no** entra al hash de estado (ver «Qué es "estado"...» arriba); verificá que `state_hash()` no cambie.
 - Detalle y política completos en el módulo interno `crates/heliarca-sim/src/invariants.rs`.
 
+## Guardado del estado
+`Sim::to_save_json(Option<&GameData>)` / `Sim::from_save_json(&str, Option<&GameData>)` (#50) serializan el estado a JSON versionado; escribir archivos, comprimir y la atomicidad son #51, y las migraciones y el rechazo de versiones futuras son #52. El formato, qué se guarda y qué no, la huella de `data/` y las verificaciones al cargar están documentados en el módulo `crates/heliarca-sim/src/sim/save.rs`.
+
+- **Dos versiones distintas:** `format_version` del **guardado** (`SAVE_FORMAT_VERSION`, hoy 1) y `FORMAT_VERSION` del **hash** (`state_hash.rs`, hoy 3). Cambiar las claves del guardado sube la primera; cambiar qué entra al hash, la segunda. Ninguna implica la otra.
+- **Agregar estado nuevo:** la guarda exhaustiva obliga a decidirlo. Al agregar un campo a `Sim` (o a `EventLog`, `CommandQueue`, `Scheduler`, `Rng`...), deja de compilar la desestructuración sin `..` de `Sim::to_save_json`, la de `save_parts`/`hash_parts` del tipo y el literal de `Sim::from_save_json`. Decidí: (1) **se guarda** → agregalo al DTO de `save.rs` (en ambos sentidos, con `deny_unknown_fields`), a la tabla del módulo, subí `SAVE_FORMAT_VERSION` y sumá un test de ida y vuelta (`crates/heliarca-sim/tests/save.rs`); (2) **se descarta** (contabilidad derivada, copia de otro dato) → comentario que lo justifique junto a la desestructuración.
+- **Comandos nuevos:** se guardan como `kind` + `args` y se reconstruyen con `CommandRegistry`, así que deben estar registrados (ver «Comandos y scripts»). Si un `CommandError` de tu comando usa un texto `&'static str` nuevo (`InvalidArgument { argument }`, `NotAllowedNow { reason }`), agregalo a `KNOWN_STATIC_TEXTS` en `command_registry.rs`: si no, el guardado con ese error en el historial falla con `UnknownStaticText`.
+- **Datos de `data/`:** no se copian al guardado; se guarda su huella (`GameData::fingerprint`). Un campo nuevo en los tipos de `data.rs` obliga (desestructuración sin `..`) a decidir si entra a la huella; cambiar lo que entra invalida las huellas guardadas (subir `DATA_FINGERPRINT_VERSION`).
+- **Sistemas del planificador:** son código y no se guardan; un `Sim` con sistemas registrados no se puede guardar (`SystemsNotSerializable`). Cuando haya sistemas reales con estado propio, ese estado tiene que entrar al guardado.
+
 ## Alcance
 La lista de **excluidos del MVP** (doc 21 §1) es una regla: combate, espionaje, mercados grises, varias especies, diplomacia con líderes, regiones en la Tierra, órbitas elípticas, etc. Cualquier idea nueva va al backlog posterior, no al MVP.

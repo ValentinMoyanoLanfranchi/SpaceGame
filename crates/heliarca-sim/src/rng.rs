@@ -125,6 +125,20 @@ impl Rng {
         (*seed, inner.state())
     }
 
+    /// Reconstruye un generador desde su semilla y su estado interno (camino inverso de
+    /// [`Rng::hash_parts`], para cargar un guardado). `None` si `state` es par: el estado de
+    /// `Pcg64Mcg` es siempre impar, así que un valor par sólo puede venir de datos corruptos.
+    /// Construye con un literal **sin `..`**: un campo nuevo obliga a decidir cómo se restaura.
+    pub(crate) fn from_parts(seed: u64, state: u128) -> Option<Self> {
+        if state & 1 == 0 {
+            return None;
+        }
+        Some(Self {
+            seed,
+            inner: Pcg64Mcg::new(state),
+        })
+    }
+
     /// Siguiente valor de 64 bits.
     pub fn next_u64(&mut self) -> u64 {
         self.inner.next_u64()
