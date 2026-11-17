@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod arena;
+pub mod events;
 pub mod ids;
 pub mod rng;
 pub mod schedule;
