@@ -40,6 +40,21 @@ pub fn format_seconds(millis: u64) -> String {
     format!("{},{:03}", millis / 1000, millis % 1000)
 }
 
+/// Duración para la salida: `<s>,<mmm> s` y, si el tiempo es mayor que 0 ms, ` (<n> pasos/s)`
+/// (pasos por segundo, entero y sin separador de miles; saturado, a partir de milisegundos).
+#[must_use]
+pub fn format_duration(millis: u64, steps: u64) -> String {
+    let base = format!("{} s", format_seconds(millis));
+    if millis == 0 {
+        return base;
+    }
+    let per_second = u128::from(steps) * 1000 / u128::from(millis);
+    format!(
+        "{base} ({} pasos/s)",
+        u64::try_from(per_second).unwrap_or(u64::MAX)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,6 +65,12 @@ mod tests {
         assert_eq!(format_seconds(7), "0,007");
         assert_eq!(format_seconds(1234), "1,234");
         assert_eq!(format_seconds(61_000), "61,000");
+    }
+
+    #[test]
+    fn la_duracion_agrega_pasos_por_segundo_si_hay_tiempo() {
+        assert_eq!(format_duration(0, 14_600), "0,000 s");
+        assert_eq!(format_duration(2, 14_600), "0,002 s (7300000 pasos/s)");
     }
 
     #[test]

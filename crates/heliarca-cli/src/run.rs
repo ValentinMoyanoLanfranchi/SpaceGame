@@ -27,7 +27,7 @@ use heliarca_sim::data::{DataLoader, ValidatedLoadError};
 use heliarca_sim::{Increment, SECONDS_PER_YEAR, Scenario, Sim};
 
 use crate::CliError;
-use crate::timing::{Stopwatch, format_seconds};
+use crate::timing::{Stopwatch, format_duration};
 
 /// Cantidad máxima de años de `--years`: acota el tiempo de una corrida y evita desbordes.
 pub const MAX_YEARS: u32 = 10_000;
@@ -159,12 +159,12 @@ pub fn run(
          Fecha final: {date}\n\
          Eventos: {}\n\
          Hash de estado: {}\n\
-         Duración real: {} s\n",
+         Duración real: {}\n",
         increment.name(),
         sim.steps(),
         sim.events().len(),
         sim.state_hash(),
-        format_seconds(elapsed),
+        format_duration(elapsed, sim.steps()),
     );
     Ok(())
 }

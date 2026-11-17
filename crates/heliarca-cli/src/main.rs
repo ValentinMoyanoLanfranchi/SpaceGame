@@ -56,7 +56,7 @@ enum Command {
             value_parser = clap::value_parser!(u32).range(0..=i64::from(run::MAX_YEARS))
         )]
         years: u32,
-        /// Incremento de tiempo de cada paso.
+        /// Incremento de tiempo de cada paso (con muchos años, los chicos son lentos: `s5` a 10000 años tarda ~16 min).
         #[arg(long, value_enum, default_value_t = run::IncrementArg::D1)]
         increment: run::IncrementArg,
     },
@@ -71,8 +71,7 @@ enum CliError {
     #[error("{0}")]
     Usage(clap::Error),
     /// Los datos de `--data-dir` no cargan o no validan (una línea por error).
-    #[error("{}", .0.join("
-"))]
+    #[error("{}", .0.join("\n"))]
     Data(Vec<String>),
     /// La simulación falló (desborde de tiempo, falta de progreso, fecha fuera de rango).
     #[error("{0}")]

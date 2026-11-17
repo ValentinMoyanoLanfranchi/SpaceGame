@@ -71,10 +71,7 @@ fn without_duration(out: &str) -> String {
     out.lines()
         .filter(|line| !line.starts_with("Duración real: "))
         .collect::<Vec<_>>()
-        .join(
-            "
-",
-        )
+        .join("\n")
 }
 
 fn is_hash(text: &str) -> bool {
@@ -95,9 +92,17 @@ fn run_40_anos_termina_y_muestra_el_hash() {
 #[test]
 fn run_muestra_la_duracion_real_con_formato_numerico() {
     let out = text(&run_real(&["--years", "1"]).stdout);
-    let value = field(&out, "Duración real")
-        .strip_suffix(" s")
-        .expect("termina en « s»");
+    let line = field(&out, "Duración real");
+    // «<s>,<mmm> s» y, si el tiempo es > 0, « (<n> pasos/s)».
+    let (value, rest) = line.split_once(" s").expect("contiene « s»");
+    assert!(
+        rest.is_empty()
+            || rest
+                .strip_prefix(" (")
+                .and_then(|r| r.strip_suffix(" pasos/s)"))
+                .is_some_and(|n| n.parse::<u64>().is_ok()),
+        "{line}"
+    );
     let (secs, millis) = value.split_once(',').expect("coma decimal");
     assert!(secs.parse::<u64>().is_ok() && millis.len() == 3, "{value}");
     assert!(millis.parse::<u16>().is_ok(), "{value}");
@@ -196,6 +201,33 @@ fn run_con_datos_rotos_sale_con_1_con_los_errores_del_cargador() {
         "{}",
         text(&output.stderr)
     );
+}
+
+/// Etiquetas (antes de «:») de las líneas de un bloque de salida, en orden.
+fn labels(block: &str) -> Vec<&str> {
+    block
+        .lines()
+        .filter_map(|line| line.split_once(": ").map(|(label, _)| label))
+        .collect()
+}
+
+#[test]
+fn el_ejemplo_del_readme_tiene_el_formato_de_la_salida_real() {
+    let readme = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    let start = readme
+        .find("Años simulados:")
+        .expect("el README no tiene el ejemplo de `run`");
+    let block = &readme[start..];
+    let block = &block[..block.find("```").expect("el ejemplo no cierra")];
+    let real = text(&run_real(&["--years", "1", "--seed", "1"]).stdout);
+    assert_eq!(
+        labels(block),
+        labels(&real),
+        "README desactualizado:\n{block}"
+    );
+    assert_eq!(labels(&real).len(), 8);
 }
 
 // ---- validate-data ----
