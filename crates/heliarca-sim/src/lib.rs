@@ -5,6 +5,7 @@
 
 pub mod arena;
 pub mod command;
+pub mod data;
 pub mod events;
 pub mod ids;
 pub mod rng;
