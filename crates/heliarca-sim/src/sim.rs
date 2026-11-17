@@ -34,6 +34,7 @@ use crate::events::{Event, EventId, EventLog, Interrupt};
 use crate::rng::Rng;
 use crate::scenario::Scenario;
 use crate::schedule::Scheduler;
+use crate::state_hash::{StateHash, hash_sim};
 use crate::time::{Calendar, CalendarDate, CalendarError, Increment, SimTime};
 
 /// Error de [`Sim::advance`]. Si ocurre, **no** se aplicó ningún comando ni cambió el estado.
@@ -193,6 +194,54 @@ impl Sim {
         }
     }
 
+    /// Hash estable de 128 bits de **todo el estado simulado**: semilla y estado del RNG, pasos,
+    /// calendario, tiempo y sistemas, log de eventos, cola e historial de comandos.
+    ///
+    /// Es la base de la repetibilidad: con el mismo escenario y semilla, las mismas operaciones
+    /// dan el mismo hash en cada paso, en cualquier plataforma y ejecución. Se calcula sobre una
+    /// serialización canónica de formato fijo con FNV-1a de 128 bits (no aleatorio) y **no**
+    /// modifica el `Sim`. No es criptográfico. Recorre todo el estado, así que cuesta O(tamaño):
+    /// es para tests y puntos de control, no para cada cuadro. Qué entra y qué no (por ejemplo,
+    /// el cursor de [`Sim::poll_events`] no) y cuándo cambia el formato: ver el módulo
+    /// interno `state_hash`.
+    ///
+    /// # Ejemplo
+    ///
+    /// ```
+    /// use heliarca_sim::{Increment, Scenario, Sim};
+    ///
+    /// let run = |seed| -> Result<_, Box<dyn std::error::Error>> {
+    ///     let mut sim = Sim::new(Scenario::default(), seed);
+    ///     sim.advance(Increment::D5)?;
+    ///     sim.advance(Increment::H1)?;
+    ///     Ok(sim)
+    /// };
+    ///
+    /// // Mismas operaciones, misma semilla: mismo hash (también entre ejecuciones y plataformas).
+    /// let (a, b) = (run(42)?, run(42)?);
+    /// assert_eq!(a.state_hash(), b.state_hash());
+    /// // Llamarlo no cambia nada.
+    /// assert_eq!(a.state_hash(), a.state_hash());
+    ///
+    /// // Otra semilla, o una operación más: otro hash.
+    /// assert_ne!(a.state_hash(), run(43)?.state_hash());
+    /// let mut c = run(42)?;
+    /// c.advance(Increment::S5)?;
+    /// assert_ne!(a.state_hash(), c.state_hash());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn state_hash(&self) -> StateHash {
+        hash_sim(
+            &self.rng,
+            self.calendar,
+            &self.scheduler,
+            &self.events,
+            &self.commands,
+            self.steps,
+        )
+    }
+
     /// Semilla con la que se creó la simulación.
     #[must_use]
     pub fn seed(&self) -> u64 {
@@ -242,6 +291,19 @@ impl Sim {
     /// soltarlo antes de seguir usando la simulación.
     pub fn poll_events(&mut self) -> &[Event] {
         self.events.poll_events()
+    }
+
+    /// RNG raíz (lectura): para derivar subflujos de sistemas de prueba. Los sistemas reales
+    /// recibirán su subflujo por el contexto de paso cuando existan (M0.3+).
+    #[cfg(test)]
+    pub(crate) fn rng(&self) -> &Rng {
+        &self.rng
+    }
+
+    /// RNG raíz (escritura): para que un comando o sistema de prueba consuma el flujo.
+    #[cfg(test)]
+    pub(crate) fn rng_mut(&mut self) -> &mut Rng {
+        &mut self.rng
     }
 
     /// Registro de eventos (escritura): para los comandos al aplicarse. Hoy sólo lo usan los

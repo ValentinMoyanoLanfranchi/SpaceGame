@@ -31,7 +31,7 @@
 //! y el instante de aplicación y el resultado. Con la misma semilla, reenviar esos registros en
 //! los mismos pasos (`record.step`) y en el mismo orden reproduce el mismo estado. Reconstruir
 //! un comando a partir de `kind` + `args` (registro de comandos) y serializar el historial son
-//! trabajo posterior; el hash de estado y la prueba de repetición llegan con #28.
+//! trabajo posterior. El hash de estado ([`Sim::state_hash`]) cubre cola e historial.
 //!
 //! Los envíos rechazados por `validate` **no** se registran: no cambiaron nada.
 //!
@@ -244,6 +244,16 @@ impl CommandQueue {
 
     pub(crate) fn record(&mut self, record: CommandRecord) {
         self.history.push(record);
+    }
+
+    /// Próximo id de comando a asignar (para el hash de estado).
+    pub(crate) const fn next_id(&self) -> u32 {
+        self.next_id
+    }
+
+    /// Pendientes en orden de envío (para el hash de estado).
+    pub(crate) fn pending(&self) -> impl Iterator<Item = &Queued> {
+        self.pending.iter()
     }
 
     pub(crate) fn pending_len(&self) -> usize {
