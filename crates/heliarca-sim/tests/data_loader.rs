@@ -61,7 +61,8 @@ fn texts(errors: &[DataError]) -> Vec<String> {
 #[test]
 fn el_data_real_del_repo_carga_ok() {
     let data = DataLoader::load_dir(repo_data()).expect("data/ debe cargar");
-    assert!(data.bodies.is_empty() && data.goods.is_empty() && data.loc_es.is_empty());
+    assert!(data.bodies.is_empty() && data.goods.is_empty());
+    assert!(!data.loc_es.is_empty());
 }
 
 #[test]
