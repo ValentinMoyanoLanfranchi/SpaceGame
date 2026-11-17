@@ -3,6 +3,7 @@
 // Un bloque `unsafe` aquí es un error de compilación (más estricto que `deny`: no admite `#[allow]`).
 #![forbid(unsafe_code)]
 
+pub mod schedule;
 pub mod time;
 
 /// Versión del núcleo de simulación (la del crate).

@@ -1,0 +1,627 @@
+//! Trait [`System`] y planificador multi-frecuencia (docs 01 «Tiempo, incrementos y ticks» y 21 §2).
+//!
+//! # Convención de calendario de cadencias (doc 22 §0)
+//!
+//! Semana = [`DAYS_PER_WEEK`] (7) días, mes = [`DAYS_PER_MONTH`] (30) días y año =
+//! [`DAYS_PER_YEAR`] (365) días. Los meses **no** se alinean con el año (12 meses = 360 días):
+//! la cadencia mensual dispara cada 30 días exactos, de modo que en 365 días corre 12 veces.
+//!
+//! # Qué significa «cruzar una frontera»
+//!
+//! Las fronteras de una cadencia con período `P` segundos están en `k * P` para `k >= 1`,
+//! contadas desde [`SimTime::ZERO`] (el inicio de la partida), sin importar la fecha de inicio
+//! del [`Calendar`](crate::time::Calendar). El instante 0 no es una frontera.
+//!
+//! Al avanzar de `t0` a `t1`, un sistema corre **una vez por cada frontera `k * P` con
+//! `t0 < k * P <= t1`** (`floor(t1 / P) - floor(t0 / P)` veces), y el [`StepContext`] lleva el
+//! **instante de esa frontera**, no `t1`. Por eso un incremento largo no «se saltea» corridas:
+//! avanzar 30 días de una vez ejecuta 30 veces un sistema diario y 1 vez uno mensual, igual que
+//! avanzar un día por vez. El resultado total no depende de cómo se parta el avance.
+//!
+//! [`Cadence::EveryIncrement`] corre exactamente una vez por incremento, con el instante final.
+//!
+//! # Orden de ejecución
+//!
+//! Dentro de un mismo avance las corridas se ordenan cronológicamente (instante de la
+//! frontera) y, a igual instante, por **prioridad fija** (menor valor primero) y luego por
+//! **id**. El orden no depende del orden de registro. Un sistema registrado más tarde sólo
+//! corre por las fronteras que se cruzan después de su registro.
+
+use std::fmt;
+
+use crate::time::{Increment, SECONDS_PER_DAY, SECONDS_PER_YEAR, SimTime};
+
+/// Días por semana (convención de cadencias, doc 22 §0).
+pub const DAYS_PER_WEEK: u64 = 7;
+/// Días por mes (convención de cadencias, doc 22 §0).
+pub const DAYS_PER_MONTH: u64 = 30;
+/// Segundos por semana.
+pub const SECONDS_PER_WEEK: u64 = SECONDS_PER_DAY * DAYS_PER_WEEK;
+/// Segundos por mes.
+pub const SECONDS_PER_MONTH: u64 = SECONDS_PER_DAY * DAYS_PER_MONTH;
+
+/// Frecuencia con la que corre un sistema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Cadence {
+    /// Una vez por incremento de tiempo, sea cual sea su duración.
+    EveryIncrement,
+    /// Cada día (86 400 s).
+    Daily,
+    /// Cada semana (7 días).
+    Weekly,
+    /// Cada mes (30 días).
+    Monthly,
+    /// Cada año (365 días).
+    Yearly,
+}
+
+impl Cadence {
+    /// Período en segundos; `None` para [`Cadence::EveryIncrement`] (no tiene período fijo).
+    #[must_use]
+    pub const fn period_seconds(self) -> Option<u64> {
+        match self {
+            Self::EveryIncrement => None,
+            Self::Daily => Some(SECONDS_PER_DAY),
+            Self::Weekly => Some(SECONDS_PER_WEEK),
+            Self::Monthly => Some(SECONDS_PER_MONTH),
+            Self::Yearly => Some(SECONDS_PER_YEAR),
+        }
+    }
+}
+
+/// Identificador estable de un sistema (texto fijo, p. ej. `"sys.produccion"`).
+///
+/// Se ordena lexicográficamente y desempata el orden de ejecución.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SystemId(pub &'static str);
+
+impl fmt::Display for SystemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// Prioridad fija de un sistema: el valor menor corre primero entre corridas simultáneas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Priority(pub u16);
+
+/// Contexto de una corrida de [`System::step`].
+///
+/// Es mínimo a propósito: el estado del mundo se agregará con el `Sim` raíz.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepContext {
+    time: SimTime,
+    cadence: Cadence,
+}
+
+impl StepContext {
+    /// Crea un contexto para una corrida en `time` disparada por `cadence`.
+    #[must_use]
+    pub const fn new(time: SimTime, cadence: Cadence) -> Self {
+        Self { time, cadence }
+    }
+
+    /// Instante de la frontera que dispara esta corrida (para
+    /// [`Cadence::EveryIncrement`], el instante al final del incremento).
+    #[must_use]
+    pub const fn time(&self) -> SimTime {
+        self.time
+    }
+
+    /// Cadencia del sistema que corre.
+    #[must_use]
+    pub const fn cadence(&self) -> Cadence {
+        self.cadence
+    }
+}
+
+/// Un subsistema de la simulación que el planificador ejecuta según su cadencia.
+pub trait System: fmt::Debug {
+    /// Id estable; único dentro de un [`Scheduler`].
+    fn id(&self) -> SystemId;
+
+    /// Prioridad fija; el valor menor corre primero. Por defecto, la más alta (0).
+    fn priority(&self) -> Priority {
+        Priority::default()
+    }
+
+    /// Cadencia del sistema.
+    fn cadence(&self) -> Cadence;
+
+    /// Ejecuta una corrida.
+    fn step(&mut self, ctx: &mut StepContext);
+}
+
+/// Errores del planificador.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleError {
+    /// Ya hay un sistema registrado con ese id.
+    DuplicateId(SystemId),
+    /// El avance desborda el tiempo representable; no se ejecutó nada.
+    TimeOverflow,
+}
+
+impl fmt::Display for ScheduleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateId(id) => write!(f, "ya hay un sistema registrado con id «{id}»"),
+            Self::TimeOverflow => f.write_str("el avance desborda el tiempo de simulación"),
+        }
+    }
+}
+
+impl std::error::Error for ScheduleError {}
+
+/// Planificador: registra sistemas, avanza el tiempo y los dispara según su cadencia.
+#[derive(Debug, Default)]
+pub struct Scheduler {
+    time: SimTime,
+    /// Siempre ordenado por (prioridad, id): independiente del orden de registro.
+    systems: Vec<Box<dyn System>>,
+}
+
+fn order_key(system: &dyn System) -> (Priority, SystemId) {
+    (system.priority(), system.id())
+}
+
+impl Scheduler {
+    /// Planificador vacío en [`SimTime::ZERO`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Instante actual.
+    #[must_use]
+    pub const fn time(&self) -> SimTime {
+        self.time
+    }
+
+    /// Cantidad de sistemas registrados.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.systems.len()
+    }
+
+    /// `true` si no hay sistemas registrados.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.systems.is_empty()
+    }
+
+    /// Registra un sistema. Su prioridad e id se leen una sola vez, ahora.
+    ///
+    /// # Errors
+    /// [`ScheduleError::DuplicateId`] si ya hay un sistema con el mismo id.
+    pub fn register(&mut self, system: Box<dyn System>) -> Result<(), ScheduleError> {
+        let key = order_key(system.as_ref());
+        if self.systems.iter().any(|s| s.id() == key.1) {
+            return Err(ScheduleError::DuplicateId(key.1));
+        }
+        // Los ids son únicos, así que la clave nunca coincide: `Err` trae la posición.
+        let (Ok(pos) | Err(pos)) = self
+            .systems
+            .binary_search_by(|s| order_key(s.as_ref()).cmp(&key));
+        self.systems.insert(pos, system);
+        Ok(())
+    }
+
+    /// Avanza un incremento y ejecuta las corridas que correspondan (ver la documentación
+    /// del módulo).
+    ///
+    /// # Errors
+    /// [`ScheduleError::TimeOverflow`] si el nuevo instante no es representable; en ese caso
+    /// no cambia el tiempo ni corre ningún sistema.
+    pub fn advance(&mut self, increment: Increment) -> Result<(), ScheduleError> {
+        let from = self.time;
+        let to = from
+            .checked_advance(increment)
+            .ok_or(ScheduleError::TimeOverflow)?;
+
+        // Corridas (instante, índice en `systems`). Un incremento dura a lo sumo 30 días,
+        // así que son pocas. `k * P <= to` porque `k <= to / P`: no desborda.
+        let mut runs: Vec<(SimTime, usize)> = Vec::new();
+        for (index, system) in self.systems.iter().enumerate() {
+            match system.cadence().period_seconds() {
+                None => runs.push((to, index)),
+                Some(period) => {
+                    let first = from.as_seconds() / period + 1;
+                    let last = to.as_seconds() / period;
+                    for k in first..=last {
+                        runs.push((SimTime::from_seconds(k * period), index));
+                    }
+                }
+            }
+        }
+        // `systems` ya está en orden (prioridad, id): el índice desempata por eso.
+        runs.sort_unstable();
+
+        self.time = to;
+        for (time, index) in runs {
+            let system = &mut self.systems[index];
+            let mut ctx = StepContext::new(time, system.cadence());
+            system.step(&mut ctx);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    #[derive(Debug)]
+    struct Counter {
+        id: &'static str,
+        priority: u16,
+        cadence: Cadence,
+        runs: Rc<Cell<u32>>,
+    }
+
+    impl System for Counter {
+        fn id(&self) -> SystemId {
+            SystemId(self.id)
+        }
+        fn priority(&self) -> Priority {
+            Priority(self.priority)
+        }
+        fn cadence(&self) -> Cadence {
+            self.cadence
+        }
+        fn step(&mut self, _ctx: &mut StepContext) {
+            self.runs.set(self.runs.get() + 1);
+        }
+    }
+
+    type Log = Rc<RefCell<Vec<(u64, &'static str)>>>;
+
+    #[derive(Debug)]
+    struct Recorder {
+        id: &'static str,
+        priority: u16,
+        cadence: Cadence,
+        log: Log,
+    }
+
+    impl System for Recorder {
+        fn id(&self) -> SystemId {
+            SystemId(self.id)
+        }
+        fn priority(&self) -> Priority {
+            Priority(self.priority)
+        }
+        fn cadence(&self) -> Cadence {
+            self.cadence
+        }
+        fn step(&mut self, ctx: &mut StepContext) {
+            self.log
+                .borrow_mut()
+                .push((ctx.time().as_seconds(), self.id));
+        }
+    }
+
+    fn counter(cadence: Cadence) -> (Box<dyn System>, Rc<Cell<u32>>) {
+        let runs = Rc::new(Cell::new(0));
+        let system = Counter {
+            id: match cadence {
+                Cadence::EveryIncrement => "c.inc",
+                Cadence::Daily => "c.dia",
+                Cadence::Weekly => "c.sem",
+                Cadence::Monthly => "c.mes",
+                Cadence::Yearly => "c.anio",
+            },
+            priority: 0,
+            cadence,
+            runs: Rc::clone(&runs),
+        };
+        (Box::new(system), runs)
+    }
+
+    /// Scheduler con un contador por cadencia: [inc, dia, sem, mes, anio].
+    fn all_counters() -> (Scheduler, [Rc<Cell<u32>>; 5]) {
+        let mut sched = Scheduler::new();
+        let mut cells = Vec::new();
+        for cadence in [
+            Cadence::EveryIncrement,
+            Cadence::Daily,
+            Cadence::Weekly,
+            Cadence::Monthly,
+            Cadence::Yearly,
+        ] {
+            let (system, runs) = counter(cadence);
+            sched.register(system).unwrap();
+            cells.push(runs);
+        }
+        let cells: [Rc<Cell<u32>>; 5] = cells.try_into().unwrap();
+        (sched, cells)
+    }
+
+    fn counts(cells: &[Rc<Cell<u32>>; 5]) -> [u32; 5] {
+        [
+            cells[0].get(),
+            cells[1].get(),
+            cells[2].get(),
+            cells[3].get(),
+            cells[4].get(),
+        ]
+    }
+
+    fn advance_n(sched: &mut Scheduler, increment: Increment, n: u32) {
+        for _ in 0..n {
+            sched.advance(increment).unwrap();
+        }
+    }
+
+    #[test]
+    fn convencion_de_cadencias() {
+        assert_eq!(DAYS_PER_WEEK, 7);
+        assert_eq!(DAYS_PER_MONTH, 30);
+        assert_eq!(Cadence::Daily.period_seconds(), Some(86_400));
+        assert_eq!(Cadence::Weekly.period_seconds(), Some(7 * 86_400));
+        assert_eq!(Cadence::Monthly.period_seconds(), Some(30 * 86_400));
+        assert_eq!(Cadence::Yearly.period_seconds(), Some(365 * 86_400));
+        assert_eq!(Cadence::EveryIncrement.period_seconds(), None);
+    }
+
+    #[test]
+    fn treinta_dias_con_distintas_particiones() {
+        let particiones: [&[(Increment, u32)]; 5] = [
+            &[(Increment::D1, 30)],
+            &[(Increment::D5, 6)],
+            &[(Increment::D30, 1)],
+            &[(Increment::D5, 5), (Increment::D1, 4), (Increment::H1, 24)],
+            // 29 d + 23 h + 720 × 5 s (1 h) = 30 d.
+            &[
+                (Increment::D1, 29),
+                (Increment::H1, 23),
+                (Increment::S5, 720),
+            ],
+        ];
+        for (i, particion) in particiones.iter().enumerate() {
+            let (mut sched, cells) = all_counters();
+            for &(inc, n) in *particion {
+                advance_n(&mut sched, inc, n);
+            }
+            if i == 4 {
+                assert_eq!(sched.time(), SimTime::from_days(30).unwrap());
+            }
+            let c = counts(&cells);
+            assert_eq!(c[1], 30, "diario, partición {i}");
+            assert_eq!(c[2], 4, "semanal, partición {i}");
+            assert_eq!(c[3], 1, "mensual, partición {i}");
+            assert_eq!(c[4], 0, "anual, partición {i}");
+        }
+    }
+
+    #[test]
+    fn el_instante_30_es_frontera_mensual_y_el_29_no() {
+        let (mut sched, cells) = all_counters();
+        advance_n(&mut sched, Increment::D1, 29);
+        assert_eq!(cells[3].get(), 0);
+        sched.advance(Increment::D1).unwrap();
+        assert_eq!(cells[3].get(), 1);
+    }
+
+    #[test]
+    fn trescientos_sesenta_y_cinco_dias() {
+        // 365 d = 12 × D30 + 5 d; o 73 × D5; o 365 × D1.
+        let particiones: [&[(Increment, u32)]; 3] = [
+            &[(Increment::D1, 365)],
+            &[(Increment::D5, 73)],
+            &[(Increment::D30, 12), (Increment::D5, 1)],
+        ];
+        for (i, particion) in particiones.iter().enumerate() {
+            let (mut sched, cells) = all_counters();
+            for &(inc, n) in *particion {
+                advance_n(&mut sched, inc, n);
+            }
+            assert_eq!(sched.time(), SimTime::from_days(365).unwrap());
+            let c = counts(&cells);
+            assert_eq!(c[1], 365, "diario, partición {i}");
+            assert_eq!(c[2], 52, "semanal, partición {i}");
+            assert_eq!(c[3], 12, "mensual, partición {i}");
+            assert_eq!(c[4], 1, "anual, partición {i}");
+        }
+    }
+
+    #[test]
+    fn cada_incremento_corre_una_vez_por_incremento() {
+        let (mut sched, cells) = all_counters();
+        advance_n(&mut sched, Increment::S5, 3);
+        sched.advance(Increment::D30).unwrap();
+        assert_eq!(cells[0].get(), 4);
+    }
+
+    #[test]
+    fn el_contexto_lleva_el_instante_de_la_frontera() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut sched = Scheduler::new();
+        sched
+            .register(Box::new(Recorder {
+                id: "dia",
+                priority: 0,
+                cadence: Cadence::Daily,
+                log: Rc::clone(&log),
+            }))
+            .unwrap();
+        sched.advance(Increment::D5).unwrap();
+        let times: Vec<u64> = log.borrow().iter().map(|e| e.0).collect();
+        let expected: Vec<u64> = (1..=5).map(|d| d * SECONDS_PER_DAY).collect();
+        assert_eq!(times, expected);
+    }
+
+    #[test]
+    fn avance_corto_sin_frontera_no_corre_sistemas_periodicos() {
+        let (mut sched, cells) = all_counters();
+        advance_n(&mut sched, Increment::H1, 23);
+        assert_eq!(counts(&cells), [23, 0, 0, 0, 0]);
+        sched.advance(Increment::H1).unwrap();
+        assert_eq!(counts(&cells), [24, 1, 0, 0, 0]);
+    }
+
+    fn run_with_order(order: &[usize]) -> Vec<(u64, &'static str)> {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        // (id, prioridad, cadencia)
+        let defs = [
+            ("b.mes", 5, Cadence::Monthly),
+            ("a.dia", 5, Cadence::Daily),
+            ("z.dia", 1, Cadence::Daily),
+            ("m.sem", 3, Cadence::Weekly),
+            ("k.inc", 5, Cadence::EveryIncrement),
+            ("y.anio", 0, Cadence::Yearly),
+        ];
+        let mut sched = Scheduler::new();
+        for &i in order {
+            let (id, priority, cadence) = defs[i];
+            sched
+                .register(Box::new(Recorder {
+                    id,
+                    priority,
+                    cadence,
+                    log: Rc::clone(&log),
+                }))
+                .unwrap();
+        }
+        advance_n(&mut sched, Increment::D30, 13);
+        log.take()
+    }
+
+    #[test]
+    fn el_orden_es_identico_entre_corridas_y_ordenes_de_registro() {
+        let base = run_with_order(&[0, 1, 2, 3, 4, 5]);
+        assert!(base.len() > 100);
+        assert_eq!(base, run_with_order(&[0, 1, 2, 3, 4, 5]));
+        assert_eq!(base, run_with_order(&[5, 4, 3, 2, 1, 0]));
+        assert_eq!(base, run_with_order(&[3, 0, 5, 1, 4, 2]));
+    }
+
+    #[test]
+    fn simultaneos_se_ordenan_por_prioridad_y_luego_id() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut sched = Scheduler::new();
+        for (id, priority) in [("c", 2), ("b", 1), ("a", 2), ("d", 0)] {
+            sched
+                .register(Box::new(Recorder {
+                    id,
+                    priority,
+                    cadence: Cadence::Daily,
+                    log: Rc::clone(&log),
+                }))
+                .unwrap();
+        }
+        sched.advance(Increment::D1).unwrap();
+        let ids: Vec<&str> = log.borrow().iter().map(|e| e.1).collect();
+        assert_eq!(ids, ["d", "b", "a", "c"]);
+    }
+
+    #[test]
+    fn en_un_avance_largo_el_orden_es_cronologico_y_luego_por_prioridad() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut sched = Scheduler::new();
+        for (id, priority, cadence) in [("mes", 0, Cadence::Monthly), ("dia", 1, Cadence::Daily)] {
+            sched
+                .register(Box::new(Recorder {
+                    id,
+                    priority,
+                    cadence,
+                    log: Rc::clone(&log),
+                }))
+                .unwrap();
+        }
+        sched.advance(Increment::D30).unwrap();
+        let log = log.borrow();
+        assert_eq!(log.len(), 31);
+        // Los días 1..=29 primero; el día 30 corre el mensual (prioridad 0) antes que el diario.
+        assert!(log[..29].iter().all(|e| e.1 == "dia"));
+        assert_eq!(log[29], (30 * SECONDS_PER_DAY, "mes"));
+        assert_eq!(log[30], (30 * SECONDS_PER_DAY, "dia"));
+        assert!(log.windows(2).all(|w| w[0].0 <= w[1].0));
+    }
+
+    #[test]
+    fn id_duplicado_se_rechaza_aunque_cambie_la_prioridad() {
+        let mut sched = Scheduler::new();
+        let (a, _) = counter(Cadence::Daily);
+        sched.register(a).unwrap();
+        let (b, _) = counter(Cadence::Daily);
+        assert_eq!(
+            sched.register(b),
+            Err(ScheduleError::DuplicateId(SystemId("c.dia")))
+        );
+        let other = Counter {
+            id: "c.dia",
+            priority: 9,
+            cadence: Cadence::Weekly,
+            runs: Rc::new(Cell::new(0)),
+        };
+        assert_eq!(
+            sched.register(Box::new(other)),
+            Err(ScheduleError::DuplicateId(SystemId("c.dia")))
+        );
+        assert_eq!(sched.len(), 1);
+        assert!(!sched.is_empty());
+    }
+
+    #[test]
+    fn desborde_de_tiempo_es_error_y_no_cambia_nada() {
+        let mut sched = Scheduler::new();
+        let (system, runs) = counter(Cadence::EveryIncrement);
+        sched.register(system).unwrap();
+        sched.time = SimTime::MAX;
+        assert_eq!(
+            sched.advance(Increment::S5),
+            Err(ScheduleError::TimeOverflow)
+        );
+        assert_eq!(sched.time(), SimTime::MAX);
+        assert_eq!(runs.get(), 0);
+    }
+
+    #[test]
+    fn cerca_del_maximo_no_desborda_en_las_fronteras() {
+        let mut sched = Scheduler::new();
+        let (system, runs) = counter(Cadence::Daily);
+        sched.register(system).unwrap();
+        sched.time = SimTime::from_seconds(u64::MAX - 5);
+        sched.advance(Increment::S5).unwrap();
+        assert_eq!(sched.time(), SimTime::MAX);
+        assert_eq!(runs.get(), 0);
+    }
+
+    #[test]
+    fn registro_tardio_cuenta_desde_el_registro() {
+        let mut sched = Scheduler::new();
+        advance_n(&mut sched, Increment::D1, 10);
+        let (system, runs) = counter(Cadence::Daily);
+        sched.register(system).unwrap();
+        advance_n(&mut sched, Increment::D1, 3);
+        assert_eq!(runs.get(), 3);
+    }
+
+    /// El resultado no depende de la partición: secuencia pseudoaleatoria determinista.
+    #[test]
+    fn particiones_arbitrarias_dan_los_mismos_conteos() {
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..50 {
+            let (mut sched, cells) = all_counters();
+            let mut incrementos = 0u32;
+            while sched.time().as_seconds() < 400 * SECONDS_PER_DAY {
+                // xorshift64: sin dependencias externas.
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let inc = Increment::ALL[(state % 5) as usize];
+                sched.advance(inc).unwrap();
+                incrementos += 1;
+            }
+            let t = sched.time().as_seconds();
+            let c = counts(&cells);
+            assert_eq!(c[0], incrementos);
+            assert_eq!(u64::from(c[1]), t / SECONDS_PER_DAY);
+            assert_eq!(u64::from(c[2]), t / SECONDS_PER_WEEK);
+            assert_eq!(u64::from(c[3]), t / SECONDS_PER_MONTH);
+            assert_eq!(u64::from(c[4]), t / SECONDS_PER_YEAR);
+        }
+    }
+}
