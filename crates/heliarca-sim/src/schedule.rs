@@ -41,6 +41,7 @@
 use std::fmt;
 
 use crate::events::{EventError, EventId, EventKind, EventLog, Interrupt, Payload};
+use crate::state_hash::StateWriter;
 use crate::time::{SECONDS_PER_DAY, SECONDS_PER_YEAR, SimTime};
 
 /// Días por semana (convención de cadencias, doc 22 §0).
@@ -165,6 +166,15 @@ pub trait System: fmt::Debug {
 
     /// Ejecuta una corrida.
     fn step(&mut self, ctx: &mut StepContext<'_>);
+
+    /// Escribe en `writer` el estado propio del sistema para el hash de estado
+    /// ([`Sim::state_hash`](crate::Sim::state_hash)). Por defecto no escribe nada.
+    ///
+    /// Un sistema con estado que afecte a lo que simula (su RNG, acumuladores, colas...) **debe**
+    /// sobrescribirlo; si no, ese estado queda fuera del hash y dos partidas que divergen sólo
+    /// ahí no se detectan. Escribir siempre en el mismo orden y con los métodos tipados del
+    /// [`StateWriter`] (ver el módulo `state_hash`).
+    fn hash_state(&self, _writer: &mut StateWriter) {}
 }
 
 /// Errores del planificador.
@@ -236,6 +246,11 @@ impl Scheduler {
             .binary_search_by(|s| order_key(s.as_ref()).cmp(&key));
         self.systems.insert(pos, system);
         Ok(())
+    }
+
+    /// Sistemas registrados, en orden de ejecución (prioridad, id), para el hash de estado.
+    pub(crate) fn systems(&self) -> &[Box<dyn System>] {
+        &self.systems
     }
 
     /// Fija el instante sin ejecutar nada (para probar el desborde).
