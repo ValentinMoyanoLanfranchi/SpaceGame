@@ -56,7 +56,8 @@ La primera corrida descarga el toolchain fijado en `rust-toolchain.toml`, así q
 ### Ejecutar la CLI
 `cargo run -p heliarca-cli -- --help` lista los subcomandos y opciones del ejecutable sin interfaz (los argumentos van después de `--`):
 
-- `run`: avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real (ver [Correr la simulación](#correr-la-simulación)); con `--script <archivo>` envía además los comandos de un script JSON (ver [Scripts de comandos](#scripts-de-comandos)).
+- `run`: avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real (ver [Correr la simulación](#correr-la-simulación)); con `--script <archivo>` envía además los comandos de un script JSON (ver [Scripts de comandos](#scripts-de-comandos)) y con `--save <archivo>` guarda el estado final (ver [Guardar y cargar](#guardar-y-cargar)).
+- `load <archivo>`: carga un guardado y continúa N años (ver [Guardar y cargar](#guardar-y-cargar)).
 - `validate-data`: valida los datos de `--data-dir` (ver [Validar los datos](#validar-los-datos)).
 - Opciones globales: `--seed <u64>` (por defecto `0`) y `--data-dir <ruta>` (por defecto `data`).
 - Sin subcomando imprime un banner con la versión del núcleo y la fecha inicial (`heliarca-cli (sim 0.1.0) - Año 1, día 1, 00:00:00`).
@@ -87,6 +88,21 @@ Opciones de `run` (además de `--seed` y `--data-dir`):
 Los datos se cargan con la misma política completa que `validate-data` (archivos más registro de ids y referencias); si fallan, los errores salen por stderr, uno por línea, con código 1. Las líneas de la salida son estables y parseables (`Clave: valor`); todas salvo `Duración real` son deterministas: misma semilla, años e incremento dan el mismo hash. El hash incluye el estado interno (semilla/RNG...) pero **no** el contador de pasos: la misma partida avanzada con otros incrementos (p. ej. 30×`d1` o 1×`d30`) da el mismo hash, aunque `Pasos` difiera.
 
 **Duración real y línea base de rendimiento.** Es el tiempo de pared del bucle de avance (sin la carga de datos), con tres decimales y coma decimal (`0,002 s`); si el tiempo es mayor que 0 se agregan los pasos por segundo (`(7300000 pasos/s)`), útil cuando la corrida es tan corta que el tiempo no tiene resolución. Se mide sólo en la CLI (`crates/heliarca-cli/src/timing.rs`) y no entra a la simulación ni al hash. Es la línea base para el criterio «40 años de juego en menos de 30 s» (doc 21 §1). Con el escenario actual (vacío, sin sistemas), 40 años a `d1` tardan en una máquina de desarrollo con Windows 11: 0,002 s en debug (`cargo run -p heliarca-cli -- run --years 40 --seed 1`) y menos de 1 ms en release (`cargo run --release -p heliarca-cli -- run --years 40 --seed 1`); a `s5` (252 millones de pasos en 40 años) tarda unos 3,9 s en release. **Ojo con los incrementos chicos y muchos años:** el costo es lineal en los pasos; `--years 10000 --increment s5` (≈6,3 mil millones de pasos) tarda unos 16 minutos. No hay tope por eso: elegí el incremento según lo que necesites medir. Son números de referencia que irán subiendo cuando existan los sistemas; el presupuesto se vigila contra el criterio de 30 s, no contra estos valores.
+
+### Guardar y cargar
+`run --save <archivo>` guarda el estado al terminar la corrida y `load <archivo> --years N` lo carga y sigue:
+
+```
+cargo run -p heliarca-cli -- run --years 10 --seed 1 --save partida.sav.zst
+cargo run -p heliarca-cli -- load partida.sav.zst --years 30
+```
+
+- **Extensión y formato:** `.sav.zst` (el JSON del estado comprimido con zstd; la CLI no impone la extensión). La escritura es atómica: un fallo a mitad deja intacto el guardado anterior, y guardar sobre un archivo existente lo reemplaza. El guardado incluye la huella de `--data-dir`.
+- **Misma salida que `run`:** `load` imprime `Años simulados` (los de **esta** invocación), `Semilla` (la del guardado), `Incremento`, `Pasos` (los del guardado más los nuevos), `Fecha final`, `Eventos`, `Hash de estado` y `Duración real`, con una primera línea `Origen: <archivo> (<fecha del guardado>)`. `--save` agrega al final `Guardado: <archivo>` (en `run` y en `load`; en `load` puede ser el mismo archivo).
+- **Continuar es igual a no interrumpir:** `run --years 10 --seed 1 --save a.sav.zst` y luego `load a.sav.zst --years 30` dan el mismo hash que `run --years 40 --seed 1` (con el mismo `--increment`, y también si el `--script` de la primera parte envía sus comandos en esos 10 años; lo cubren los tests de la CLI).
+- **`--seed` en `load`:** la semilla viene del guardado, así que pasarla es un error de uso (código 2) en lugar de ignorarla en silencio. `--data-dir` sí aplica: si los datos no son los del guardado, falla con `DataMismatch` (código 1).
+- **`--script` en `load`:** no se soporta (error de uso, código 2): sus `at` serían ambiguos (¿desde el inicio de la partida o desde lo cargado?). Los comandos ya enviados quedan en el guardado.
+- **Errores (código 1):** archivo inexistente, vacío, que no es zstd, truncado o corrupto, de una versión más nueva, o con datos distintos; el mensaje empieza con `error: no se pudo cargar <archivo>: ...`. Si falla `--save` (p. ej. el directorio no existe), el resumen de la corrida **ya salió por stdout** (la simulación terminó bien) y el error sale por stderr con código 1, sin la línea `Guardado`.
 
 ### Scripts de comandos
 `run --script <archivo>` envía comandos a la simulación en momentos dados, para repetir una partida exacta. El script es un JSON **versionado**; el del repo es [`examples/script-ejemplo.json`](examples/script-ejemplo.json):

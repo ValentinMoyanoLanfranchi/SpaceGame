@@ -66,6 +66,7 @@ Otros tipos: `type:spike` (investigación acotada que termina en una decisión) 
 - `debug.mark` es infraestructura de diagnóstico, no mecánica del juego: no la uses para modelar nada del diseño.
 - Agregar una variante de `EventKind` requiere su tag en `state_hash.rs` (`write_kind`); un tag nuevo no cambia los hashes de estados que no la usan, así que no sube `FORMAT_VERSION`.
 - Formato de los scripts de `run --script` (versión, `at` en días, orden, posiciones de error): README, sección «Scripts de comandos». Si cambia el formato, subí `version` y mantené el mensaje de versión desconocida. El script de ejemplo es `examples/script-ejemplo.json` y lo corre un test.
+- Guardados en la CLI (`run --save`, `load`): README, sección «Guardar y cargar». Si cambia la salida de `load`, actualizá esa sección y los tests de `crates/heliarca-cli/tests/cli.rs`; continuar un guardado debe dar el mismo hash que no interrumpir la corrida.
 
 ## Tests de propiedades
 Los tests de propiedades usan `proptest` (dev-dependency de `heliarca-sim`, con `default-features = false` y sólo `std`; no entra al código de producción ni a `heliarca-godot`). Hay dos niveles:
