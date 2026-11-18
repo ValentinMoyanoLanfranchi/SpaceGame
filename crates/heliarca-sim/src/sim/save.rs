@@ -3,8 +3,10 @@
 //! [`Sim::to_save_json`] serializa un `Sim` a un texto JSON y [`Sim::from_save_json`] lo carga de
 //! vuelta, de modo que `cargar(guardar(sim))` tiene el mismo [`Sim::state_hash`] que `sim` y,
 //! avanzando igual, ambos siguen dando el mismo hash. Escribir/leer archivos, comprimir, la
-//! atomicidad (#51), el rechazo de versiones futuras y las migraciones (#52) **no** son de este
-//! módulo: trabaja con `&str`/`String`.
+//! atomicidad (#51) **no** son de este módulo (ver `save_file`): trabaja con `&str`/`String`.
+//! Las migraciones de formatos viejos y el rechazo de versiones futuras (#52) están en
+//! `save_migrate`: [`Sim::from_save_json`] migra el JSON a la versión actual **antes** de
+//! deserializarlo, y [`Sim::to_save_json`] escribe siempre la versión actual.
 //!
 //! # Formato (versión 1)
 //!
@@ -73,10 +75,11 @@
 //!
 //! # Verificaciones al cargar
 //!
-//! Nunca entra en pánico: versión desconocida, JSON malformado o truncado, tipos incorrectos,
+//! Nunca entra en pánico: versión ausente, inválida o más nueva que la actual, migración fallida, JSON malformado o truncado, tipos incorrectos,
 //! campos faltantes o sobrantes, valores inválidos (calendario, parámetros, RNG), huella de datos
-//! distinta, [`Sim::check_invariants`] (el `Sim` cargado debe cumplirlos) y, si la versión del
-//! hash coincide con la actual, que el `state_hash` recalculado sea el guardado.
+//! distinta, [`Sim::check_invariants`] (el `Sim` cargado debe cumplirlos) y, **sólo si** la versión
+//! del hash guardada coincide con la actual, que el `state_hash` recalculado sea el guardado. Si
+//! es otra, el hash se recalcula y no se compara (política y motivo en `save_migrate`).
 //!
 //! # Agregar estado nuevo al guardado
 //!
@@ -85,7 +88,7 @@
 //!    decidí si se guarda (y cómo) o se descarta con un comentario que lo justifique.
 //! 2. Si se guarda: agregalo al DTO correspondiente de este módulo (con `deny_unknown_fields`),
 //!    a su conversión en ambos sentidos y a la tabla de arriba. Sumar **claves** cambia el
-//!    formato: subí [`SAVE_FORMAT_VERSION`] (y, cuando existan, agregá la migración, #52).
+//!    formato: subí [`SAVE_FORMAT_VERSION`] **y agregá la migración** (ver `save_migrate`; un test falla si falta).
 //! 3. Si el estado entra al hash, el hash de un `Sim` cargado debe seguir coincidiendo: el test
 //!    de ida y vuelta lo comprueba.
 
@@ -96,6 +99,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as Json;
 use thiserror::Error;
 
+use super::save_migrate;
 use super::{CommandQueue, EventLog, Mark, Params, Rng, Scheduler, Sim};
 use crate::command::{CommandError, CommandId, CommandOutcome, CommandRecord, Queued};
 use crate::command_registry::{CommandBuildError, CommandRegistry, known_static_text};
@@ -147,13 +151,27 @@ pub enum SaveError {
     /// El guardado no tiene `format_version`.
     #[error("el guardado no tiene `format_version`")]
     MissingFormatVersion,
-    /// `format_version` no es una versión que este código sepa leer.
-    #[error("versión de guardado desconocida: {found} (se sabe leer la {supported})")]
-    UnknownFormatVersion {
-        /// Lo que dice el archivo.
+    /// `format_version` no es un entero sin signo (texto, negativo, decimal, `null`...).
+    #[error("`format_version` inválida: {found} (debe ser un entero sin signo)")]
+    InvalidFormatVersion {
+        /// Lo que dice el archivo, como JSON.
         found: String,
-        /// La versión que se sabe leer.
+    },
+    /// El guardado es de una versión **más nueva** que la que este código sabe leer.
+    #[error("guardado de la versión {found}, más nueva que la que se sabe leer ({supported})")]
+    UnsupportedSaveVersion {
+        /// Versión del archivo.
+        found: u64,
+        /// Última versión que este código sabe leer (la actual).
         supported: u32,
+    },
+    /// Falló la migración de un guardado viejo a la versión siguiente (JSON de forma inesperada).
+    #[error("no se pudo migrar el guardado desde la versión {from}: {reason}")]
+    Migration {
+        /// Versión que se estaba migrando.
+        from: u32,
+        /// Qué falló.
+        reason: String,
     },
     /// Un valor del guardado es inválido (calendario, parámetros, estado del RNG, hexadecimal...).
     #[error("campo `{field}` inválido: {reason}")]
@@ -1007,7 +1025,8 @@ impl Sim {
     /// # Errors
     ///
     /// [`SaveError::Malformed`] (JSON inválido o truncado, tipo incorrecto, campo faltante o
-    /// sobrante), [`SaveError::MissingFormatVersion`], [`SaveError::UnknownFormatVersion`],
+    /// sobrante), [`SaveError::MissingFormatVersion`], [`SaveError::InvalidFormatVersion`],
+    /// [`SaveError::UnsupportedSaveVersion`] (más nueva que la actual), [`SaveError::Migration`],
     /// [`SaveError::InvalidField`], [`SaveError::DataMismatch`], los errores de comandos
     /// ([`SaveError::UnknownCommandKind`], [`SaveError::CommandRebuild`],
     /// [`SaveError::CommandMismatch`], [`SaveError::UnknownStaticText`]),
@@ -1015,17 +1034,7 @@ impl Sim {
     pub fn from_save_json(json: &str, data: Option<&GameData>) -> Result<Self, SaveError> {
         let raw: Json =
             serde_json::from_str(json).map_err(|error| SaveError::Malformed(error.to_string()))?;
-        match raw.get("format_version") {
-            None if raw.is_object() => return Err(SaveError::MissingFormatVersion),
-            Some(version) if version.as_u64() == Some(u64::from(SAVE_FORMAT_VERSION)) => {}
-            Some(version) => {
-                return Err(SaveError::UnknownFormatVersion {
-                    found: version.to_string(),
-                    supported: SAVE_FORMAT_VERSION,
-                });
-            }
-            None => {}
-        }
+        let raw = save_migrate::migrate_to_current(raw)?;
         let file: SaveFile =
             serde_path_to_error::deserialize(raw).map_err(|error| malformed(&error))?;
         let SaveFile {

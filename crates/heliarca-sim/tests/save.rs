@@ -249,22 +249,35 @@ fn version_ausente_o_desconocida_es_error_claro() {
     let mut v = base.clone();
     v.as_object_mut().unwrap().remove("format_version");
     assert_eq!(load(&v).unwrap_err(), SaveError::MissingFormatVersion);
-    for bad in [
-        Json::from(0),
-        Json::from(2),
-        Json::from(99),
-        Json::from("1"),
-    ] {
+    // Más nueva que la actual: se rechaza con la versión leída y la soportada.
+    for (bad, found) in [(2, 2), (99, 99)] {
         let mut v = base.clone();
-        v["format_version"] = bad;
-        assert!(
-            matches!(
-                load(&v),
-                Err(SaveError::UnknownFormatVersion { supported: 1, .. })
-            ),
+        v["format_version"] = Json::from(bad);
+        assert_eq!(
+            load(&v).unwrap_err(),
+            SaveError::UnsupportedSaveVersion {
+                found,
+                supported: SAVE_FORMAT_VERSION
+            },
             "{v}"
         );
     }
+    // Ni entero sin signo: versión inválida (distinta de la ausente).
+    for bad in [Json::from("1"), Json::from(-1), Json::from(1.5), Json::Null] {
+        let mut v = base.clone();
+        v["format_version"] = bad;
+        assert!(
+            matches!(load(&v), Err(SaveError::InvalidFormatVersion { .. })),
+            "{v}"
+        );
+    }
+    // La versión 0 existe (ver `save_migrations.rs`): con el cuerpo de v1 la migración falla.
+    let mut v = base.clone();
+    v["format_version"] = Json::from(0);
+    assert!(matches!(
+        load(&v),
+        Err(SaveError::Migration { from: 0, .. })
+    ));
 }
 
 #[test]

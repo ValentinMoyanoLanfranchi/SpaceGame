@@ -204,6 +204,7 @@ pub struct Sim {
 
 mod save;
 mod save_file;
+mod save_migrate;
 
 pub use save::{DataFingerprint, SAVE_FORMAT_VERSION, SaveError};
 pub use save_file::{DEFAULT_MAX_SAVE_BYTES, SAVE_FILE_EXTENSION, SaveFileError};
