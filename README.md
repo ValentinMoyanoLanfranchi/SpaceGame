@@ -238,19 +238,54 @@ Cada uno imprime `OK: ...` si pasa y sale con error si no. Protegen, entre otras
 Con `cargo install --locked cargo-deny` instalado, `cargo deny check` aplica la política de [Dependencias y auditoría](#dependencias-y-auditoría-cargo-deny). Es opcional en local: el CI lo corre igual. Necesita red, porque descarga la base de RustSec.
 
 ### Godot
-El proyecto está en [`godot/`](godot/) y se abre con **Godot 4.7.2** (la versión fijada, ver [doc 24](Documentacion/24_decision_godot_gdext.md)); bajá el editor estándar (no .NET) de [godotengine.org](https://godotengine.org/download/archive/4.7.2-stable/). Para compilar no hace falta Godot.
+El proyecto está en [`godot/`](godot/) y se abre con **Godot 4.7.2**, la versión fijada (ver [doc 24](Documentacion/24_decision_godot_gdext.md)). Para compilar la extensión no hace falta Godot; sí para abrir el proyecto y probarlo. Este procedimiento se probó en una copia limpia del repo, **sólo en Windows 11** (MSVC, Godot 4.7.2 estándar). En Linux y macOS debería andar igual cambiando el nombre de la biblioteca (ver «Otras plataformas»), pero no se probó.
 
-1. Compilá la extensión: `cargo build -p heliarca-godot`. Deja `target/debug/heliarca_godot.dll` (Windows), `libheliarca_godot.so` (Linux) o `libheliarca_godot.dylib` (macOS).
-2. Abrí la carpeta `godot/` desde el Project Manager de Godot. La consola del editor tiene que mostrar `Initialize godot-rust (API v4.7...)` y `Heliarca: extensión cargada (...)`, sin errores.
+#### Requisitos
+- **Rust 1.100.0** (ver [Requisitos](#requisitos)): `rustup` lo instala solo al entrar al repo.
+- **Godot 4.7.2 estándar** (no .NET), de las [compilaciones oficiales](https://github.com/godotengine/godot-builds/releases/tag/4.7.2-stable). Bajá el zip de tu plataforma (`Godot_v4.7.2-stable_win64.exe.zip`, `Godot_v4.7.2-stable_linux.x86_64.zip` o `Godot_v4.7.2-stable_macos.universal.zip`) y el archivo `SHA512-SUMS.txt` de la misma página, y verificá el checksum antes de ejecutar nada:
+  - Linux/macOS/Git Bash: `grep win64.exe.zip SHA512-SUMS.txt | sha512sum -c -` (en macOS, `shasum -a 512 -c -`).
+  - PowerShell: `(Get-FileHash Godot_v4.7.2-stable_win64.exe.zip -Algorithm SHA512).Hash` y compará (sin importar mayúsculas) con la línea del zip en `SHA512-SUMS.txt`.
 
-[`godot/heliarca.gdextension`](godot/heliarca.gdextension) apunta directo al `target/` del workspace (`res://../target/{debug,release}/...`), así que no hay que copiar nada. El editor usa la entrada `debug` (`cargo build`); la `release` es para el juego exportado (`cargo build --release`). Si falta la biblioteca, el editor imprime `GDExtension dynamic library not found: 'res://heliarca.gdextension'` y abre el proyecto sin la extensión: compilá y reabrí. En Windows puede avisar que acortó el nombre de `heliarca_godot.pdb` al copiar la DLL para la recarga en caliente: es inocuo. La guía completa y la recarga en caliente se documentan en #60.
+  Descomprimí en una carpeta propia: no hay instalador. En Windows quedan `Godot_v4.7.2-stable_win64.exe` (editor) y `Godot_v4.7.2-stable_win64_console.exe` (versión de consola, la que imprime en la terminal; conviene para los comandos de abajo). En lo que sigue, `godot` es ese ejecutable (con su ruta o agregado al `PATH`). Al arrancar, `godot --version` tiene que informar `4.7.2.stable.official...`.
+
+#### Paso a paso
+Todo desde la raíz del repo, en una copia recién clonada:
+
+1. **Compilar la extensión:** `cargo build -p heliarca-godot`. Deja `target/debug/heliarca_godot.dll` (Windows). En un clon nuevo compila `godot` (gdext) y el resto desde cero: ~2 min 20 s en la prueba; después es incremental (~2 s).
+2. **Importar el proyecto (obligatorio en un clon nuevo):** `godot --headless --path godot --import --quit`. Godot necesita generar `godot/.godot/` (caché de scripts, clases y extensiones; está ignorada por git) y sin ella no conoce las clases de la extensión: correr la escena o el chequeo antes falla con `Identifier "SimHandle" not declared in the current scope` aunque la DLL exista. Este paso lo hace también el editor al abrir el proyecto por primera vez. Es normal ver un `WARNING` sobre `heliarca_godot.pdb` (ver «Qué se ve»). **Ojo con el código de salida:** la primera importación que carga la extensión termina con código `-1073741819` (`0xC0000005`, falla al cerrar Godot) aunque ya generó `godot/.godot/` bien (se comprobó: todo lo que sigue anda); repetir el comando da 0. No encadenes este paso con `&&` ni con `set -e`: ignorá su código o corrélo dos veces.
+3. **Abrir el editor:** `godot --editor --path godot`, o abrí la carpeta `godot/` desde el Project Manager. La consola tiene que mostrar `Initialize godot-rust (API v4.7...)` y `Heliarca: extensión cargada (heliarca-sim 0.1.0)`, sin errores. Al cerrarlo, el editor reescribe el encabezado de comentarios de `godot/project.godot`: no lo commitees (`git checkout godot/project.godot`).
+4. **Correr la escena sin abrir el editor:** `godot --headless --path godot --quit-after 10`, que imprime `Heliarca (sim 0.1.0): Año 1, día 1, 00:00:00`.
+5. **Chequeo automático:** `godot --headless --path godot --script res://tests/check_main.gd` imprime `OK: la etiqueta muestra '...'` y sale con código 0; con código 1 si algo no coincide (ver «La escena `Main`»).
+
+Para borrar el estado de Godot y repetir desde cero basta borrar `godot/.godot/` (y volver al paso 2).
+
+#### Qué se ve
+- **Falta la DLL** (no se corrió el paso 1 o se hizo `cargo clean`): el editor imprime `GDExtension dynamic library not found: 'res://heliarca.gdextension'` y `Error loading extension`, y abre igual el proyecto sin la extensión. Compilá y reabrí. La escena y el chequeo fallan con `SimHandle` no declarado.
+- **`WARNING: The original path size of 'heliarca_godot.pdb' ... was shortened to '~heliarca__999.pdb'`** (`copy_and_rename_pdb`): Godot copia la DLL y su `.pdb` con otro nombre para poder recargarla (ver «Recarga en caliente»). Es inocuo.
+- `godot/heliarca.gdextension` apunta directo al `target/` del workspace (`res://../target/{debug,release}/...`), así que no hay que copiar nada. El editor usa la entrada `debug` (`cargo build`); la `release` es para el juego exportado (`cargo build --release`). `res://../` sale de la carpeta del proyecto, así que **no sirve para exportar**: al exportar hay que copiar la biblioteca dentro de `godot/` y apuntar el `.gdextension` ahí (queda para la tarea de exportación).
+- El `heliarca.gdextension.uid` sí se versiona (recomendación oficial de Godot 4.4+).
+
+#### Otras plataformas
+El `.gdextension` ya declara las rutas de Linux (`target/debug/libheliarca_godot.so`) y macOS (`libheliarca_godot.dylib`), con `compatibility_minimum = "4.7"` y `entry_symbol = "gdext_rust_init"`. En Linux hace falta `build-essential` (ver [Requisitos](#requisitos)). El CI compila el `cdylib` en Ubuntu y Windows, pero **no abre Godot**: en Linux y macOS ni la apertura del editor ni el recargado en caliente están probados.
 
 #### La escena `Main`
 `Main.tscn` tiene una `Label` y el script [`godot/Main.gd`](godot/Main.gd): en `_ready` crea un `SimHandle` (clase gdext de `heliarca-godot`, base `RefCounted`, que posee un `Sim`), llama a `hello()` y muestra el texto en la etiqueta y en la consola. El texto lo arma `heliarca-sim` (versión del núcleo y fecha inicial), por ejemplo `Heliarca (sim 0.1.0): Año 1, día 1, 00:00:00`. `SimHandle` no tiene lógica de juego: sólo posee el `Sim` y envuelve su API pública (`set_seed(semilla)` lo reinicia con otra semilla).
 
-Para verificarlo sin abrir el editor (con la extensión ya compilada): `godot --headless --path godot --quit-after 10` imprime esa línea sin errores, y `godot --headless --path godot --script res://tests/check_main.gd` carga la escena, espera un frame y compara el `text` de la etiqueta con `SimHandle.hello()` (sale con código 1 si no coinciden). Si falta la biblioteca, `Main.gd` falla con `Identifier "SimHandle" not declared in the current scope` (la clase no existe sin la extensión): compilá con `cargo build -p heliarca-godot`.
+`godot/tests/check_main.gd` carga la escena, espera un frame y comprueba que la etiqueta coincide con `SimHandle.hello()` **y** con el valor esperado de forma independiente: `Heliarca (sim <versión del Cargo.toml raíz>): Año 1, día 1, 00:00:00`. Así un cambio en la cola de `hello_text` (versión o fecha) hace fallar el chequeo aunque la etiqueta siga igualando a `hello()`. Si no hay extensión compilada, falla con `SimHandle` no declarado.
 
-`godot/.godot/` (caché del editor) está ignorada por git; el `heliarca.gdextension.uid` sí se versiona (recomendación oficial de Godot 4.4+, para que no se rompan las referencias entre recursos).
+#### Recarga en caliente (probada en Windows)
+`heliarca.gdextension` tiene `reloadable = true`. Se probó con Godot 4.7.2 y gdext 0.5.5 en Windows 11, con el editor abierto sobre `godot/` y un `SimHandle` vivo, recompilando con `cargo build -p heliarca-godot` (detalle y evidencia en el [doc 24](Documentacion/24_decision_godot_gdext.md), §2).
+
+**Resultado: funciona, con límites.**
+- **Recompilar con el editor abierto anda en Windows.** Godot no bloquea `target/debug/heliarca_godot.dll`: carga una copia (`~heliarca_godot.dll`, con su `~heliarca__0.pdb`, en la misma carpeta `target/debug/`) y `cargo build` reemplaza el original sin errores.
+- **El editor recarga solo, pero al recuperar el foco la ventana**, no apenas termina la compilación: con la ventana ya enfocada no se recargó en más de un minuto; al salir y volver a ella la consola volvió a imprimir `Initialize godot-rust ...` y `Heliarca: extensión cargada ...`, y `SimHandle.new().hello()` pasó a devolver el texto nuevo sin reiniciar el editor. O sea: compilá, cambiá de ventana y volvé al editor.
+- **Cambios de código soportados:** cuerpos de funciones (texto de `hello_text`), agregar campos a la clase, agregar métodos `#[func]`, cambiar el tipo de retorno y agregar una clase nueva (aparece en `ClassDB`).
+- **Se pierde el estado de Rust:** las instancias vivas siguen siendo objetos válidos y pasan a usar el código nuevo, pero sus campos Rust se reinician a los valores de `init` (un `SimHandle` con `set_seed(7)` o un `Sim` avanzado vuelve a un `Sim` nuevo). Los valores guardados del lado de GDScript (referencias, variables) no se tocan.
+- **Cambios de firma:** las llamadas ya escritas en GDScript contra la firma vieja fallan con error de script al reejecutarse (por ejemplo `hello()` sin el argumento nuevo); hay que actualizar los llamadores.
+- **Una escena corriendo (F5, o `godot --path godot` en otra ventana) NO se recarga y bloquea la DLL**: es otro proceso que la tiene abierta y `cargo build` falla con `failed to remove file ...heliarca_godot.dll: Access is denied. (os error 5)`. Hay que cerrar la escena antes de recompilar.
+- Dentro del editor, una instancia creada con `ClassDB.instantiate("Clase")` de una clase que no es `tool` es un placeholder y llamarle métodos da error (`Cannot call GDExtension method bind ... on placeholder instance`); `SimHandle.new()` desde un script `@tool` sí ejecuta el código. No afecta al juego en ejecución. Quitar métodos o campos y la escena corriendo dentro del editor no se probaron.
+
+**Plan B** (si el editor se cuelga, la DLL queda bloqueada o hay una escena abierta): cerrar el editor y la escena, `cargo build -p heliarca-godot` y reabrir. Si un día el editor bloqueara la DLL, copiar la compilación con otro nombre (por ejemplo `godot/bin/heliarca_godot_dev.dll`) y apuntar el `.gdextension` a esa copia.
 
 ## Cómo se trabaja
 El desarrollo está planificado en **issues de GitHub** con jerarquía `Hito → Épica → Historia → Tarea`. Leé [CONTRIBUTING.md](CONTRIBUTING.md) y el [plan de desarrollo](Documentacion/23_plan_de_desarrollo.md). Todo cambio entra por **Pull Request**; `main` está protegida (ver [SECURITY.md](SECURITY.md)).
