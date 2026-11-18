@@ -245,6 +245,11 @@ El proyecto está en [`godot/`](godot/) y se abre con **Godot 4.7.2** (la versi�
 
 [`godot/heliarca.gdextension`](godot/heliarca.gdextension) apunta directo al `target/` del workspace (`res://../target/{debug,release}/...`), así que no hay que copiar nada. El editor usa la entrada `debug` (`cargo build`); la `release` es para el juego exportado (`cargo build --release`). Si falta la biblioteca, el editor imprime `GDExtension dynamic library not found: 'res://heliarca.gdextension'` y abre el proyecto sin la extensión: compilá y reabrí. En Windows puede avisar que acortó el nombre de `heliarca_godot.pdb` al copiar la DLL para la recarga en caliente: es inocuo. La guía completa y la recarga en caliente se documentan en #60.
 
+#### La escena `Main`
+`Main.tscn` tiene una `Label` y el script [`godot/Main.gd`](godot/Main.gd): en `_ready` crea un `SimHandle` (clase gdext de `heliarca-godot`, base `RefCounted`, que posee un `Sim`), llama a `hello()` y muestra el texto en la etiqueta y en la consola. El texto lo arma `heliarca-sim` (versión del núcleo y fecha inicial), por ejemplo `Heliarca (sim 0.1.0): Año 1, día 1, 00:00:00`. `SimHandle` no tiene lógica de juego: sólo posee el `Sim` y envuelve su API pública (`set_seed(semilla)` lo reinicia con otra semilla).
+
+Para verificarlo sin abrir el editor (con la extensión ya compilada): `godot --headless --path godot --quit-after 10` imprime esa línea sin errores, y `godot --headless --path godot --script res://tests/check_main.gd` carga la escena, espera un frame y compara el `text` de la etiqueta con `SimHandle.hello()` (sale con código 1 si no coinciden). Si falta la biblioteca, `Main.gd` falla con `Identifier "SimHandle" not declared in the current scope` (la clase no existe sin la extensión): compilá con `cargo build -p heliarca-godot`.
+
 `godot/.godot/` (caché del editor) está ignorada por git; el `heliarca.gdextension.uid` sí se versiona (recomendación oficial de Godot 4.4+, para que no se rompan las referencias entre recursos).
 
 ## Cómo se trabaja
