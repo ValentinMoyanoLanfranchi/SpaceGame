@@ -59,7 +59,7 @@ Están abiertas como issues `type:decision` / `type:spike` con su hito:
 
 | Tema | Doc | Se decide en |
 |---|---|---|
-| Versión de Godot + gdext y recarga en caliente | 21, 17 #38 | M0 |
+| Versión de Godot + gdext y recarga en caliente | 21, 17 #38, 24 | M0 (versión decidida en 24; recarga en caliente en M0.7.1.4) |
 | ¿Hay `cargo` disponible en el entorno de Claude? | 17 #40 | M0 |
 | Formato de datos: ¿JSON puro o con hoja de cálculo exportable? | 21 | M0 |
 | Escenas del editor vs. UI programática; estilo visual mínimo | 21, 17 #39 | M1 |
