@@ -1,0 +1,153 @@
+{
+  "calendar": {
+    "day": 1,
+    "hour": 0,
+    "minute": 0,
+    "second": 0,
+    "year": 1
+  },
+  "commands": {
+    "history": [
+      {
+        "applied_at": 0,
+        "args": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "uno"
+            }
+          }
+        ],
+        "id": 0,
+        "kind": "debug.mark",
+        "outcome": {
+          "status": "applied"
+        },
+        "step": 0,
+        "submitted_at": 0
+      },
+      {
+        "applied_at": 432000,
+        "args": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "dos"
+            }
+          }
+        ],
+        "id": 1,
+        "kind": "debug.mark",
+        "outcome": {
+          "status": "applied"
+        },
+        "step": 1,
+        "submitted_at": 432000
+      },
+      {
+        "applied_at": 435600,
+        "args": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "tres"
+            }
+          }
+        ],
+        "id": 2,
+        "kind": "debug.mark",
+        "outcome": {
+          "status": "applied"
+        },
+        "step": 2,
+        "submitted_at": 435600
+      }
+    ],
+    "next_id": 4,
+    "pending": [
+      {
+        "args": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "pendiente"
+            }
+          }
+        ],
+        "id": 3,
+        "kind": "debug.mark",
+        "submitted_at": 522000
+      }
+    ]
+  },
+  "events": {
+    "cursor": 2,
+    "log": [
+      {
+        "cause": null,
+        "id": 0,
+        "interrupt": "none",
+        "kind": "debug_mark",
+        "payload": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "uno"
+            }
+          }
+        ],
+        "time": 0
+      },
+      {
+        "cause": null,
+        "id": 1,
+        "interrupt": "none",
+        "kind": "debug_mark",
+        "payload": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "dos"
+            }
+          }
+        ],
+        "time": 432000
+      },
+      {
+        "cause": null,
+        "id": 2,
+        "interrupt": "none",
+        "kind": "debug_mark",
+        "payload": [
+          {
+            "key": "label",
+            "value": {
+              "type": "text",
+              "value": "tres"
+            }
+          }
+        ],
+        "time": 435600
+      }
+    ]
+  },
+  "format_version": 0,
+  "params": {
+    "days_per_month": 30,
+    "days_per_week": 7,
+    "days_per_year": 365
+  },
+  "rng": {
+    "seed": 7,
+    "state": "044c3cd7f43c661c63cbe1e459320dd7"
+  },
+  "state_hash": "5a35aa4877df537affed7a969d631b76",
+  "steps": 3,
+  "time_s": 522000
+}
