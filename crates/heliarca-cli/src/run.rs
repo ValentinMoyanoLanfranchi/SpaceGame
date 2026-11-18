@@ -16,6 +16,8 @@
 //!   girar para siempre.
 //! - **Límite**: `--years` va de 0 a [`MAX_YEARS`] (validado por clap: error de uso, código 2).
 //!   `--years 0` es válido: 0 pasos.
+//! - **Guardado (`--save`) y `load`**: ver [`finish`] y [`load`]. El guardado se escribe al final,
+//!   con escritura atómica de `heliarca-sim`, pasando los datos para fijar su huella.
 //! - **Duración real**: ver [`crate::timing`]; mide sólo el bucle de avance (sin la carga de
 //!   datos) y no influye en la simulación ni en el hash.
 
@@ -23,7 +25,7 @@ use std::io::Write;
 use std::path::Path;
 
 use clap::ValueEnum;
-use heliarca_sim::data::{DataLoader, ValidatedLoadError};
+use heliarca_sim::data::{DataLoader, GameData, ValidatedLoadError};
 use heliarca_sim::ids::EntityId;
 use heliarca_sim::{
     CommandOutcome, CommandRegistry, Increment, SECONDS_PER_DAY, SECONDS_PER_YEAR, Scenario, Sim,
@@ -217,60 +219,57 @@ pub struct RunOptions<'a> {
     pub increment: IncrementArg,
     /// Script de comandos, si se pasó `--script`.
     pub script: Option<&'a Path>,
+    /// Archivo donde guardar el estado final, si se pasó `--save`.
+    pub save: Option<&'a Path>,
 }
 
-/// Ejecuta `run` y escribe el resumen en `out`.
-///
-/// # Errors
-///
-/// [`CliError::Data`] si los datos no cargan o no validan; [`CliError::Script`] si el script no
-/// se lee, es inválido o un comando falla; [`CliError::Sim`] si la simulación falla (desborde,
-/// falta de progreso, fecha fuera de rango).
-pub fn run(options: &RunOptions<'_>, out: &mut dyn Write) -> Result<(), CliError> {
-    let RunOptions {
-        data_dir,
-        seed,
-        years,
-        increment,
-        script,
-    } = *options;
-    let validated = DataLoader::load_validated(data_dir)
-        .map_err(|error| CliError::Data(load_error_lines(&error)))?;
-    let total = total_seconds(years)
-        .ok_or_else(|| CliError::Sim("el total de años desborda el tiempo de simulación".into()))?;
-    // El script se lee, valida y construye completo ANTES de correr nada.
-    let script = script
-        .map(|path| {
-            let loaded = Script::load(path, &CommandRegistry::builtin())
-                .and_then(|script| script.check_range(total / SECONDS_PER_DAY).map(|()| script))
-                .map_err(|error| CliError::Script(format!("script {}: {error}", path.display())))?;
-            Ok::<_, CliError>((path, loaded))
-        })
-        .transpose()?;
-    let mut sim = Sim::new(Scenario::from_game_data(&validated.data), seed);
+/// Opciones de [`load`].
+pub struct LoadOptions<'a> {
+    /// Directorio de datos.
+    pub data_dir: &'a Path,
+    /// Guardado a cargar.
+    pub file: &'a Path,
+    /// Años a continuar.
+    pub years: u32,
+    /// Incremento elegido.
+    pub increment: IncrementArg,
+    /// Archivo donde volver a guardar el estado final, si se pasó `--save`.
+    pub save: Option<&'a Path>,
+}
 
-    let script_info = script
-        .as_ref()
-        .map(|(path, script)| (path.display().to_string(), script.entries.len()));
-    let watch = Stopwatch::start();
-    match script {
-        None => advance_total(&mut sim, increment.increment(), total)?,
-        Some((path, script)) => run_script(&mut sim, increment.increment(), total, script, path)?,
-    }
-    let elapsed = watch.elapsed_millis();
+/// Carga los datos con la política completa de `validate-data`.
+fn load_data(data_dir: &Path) -> Result<GameData, CliError> {
+    DataLoader::load_validated(data_dir)
+        .map(|validated| validated.data)
+        .map_err(|error| CliError::Data(load_error_lines(&error)))
+}
 
+/// Segundos totales de `years` años, o error si desborda.
+fn checked_total(years: u32) -> Result<u64, CliError> {
+    total_seconds(years)
+        .ok_or_else(|| CliError::Sim("el total de años desborda el tiempo de simulación".into()))
+}
+
+/// Imprime las líneas finales comunes a `run` y `load` (desde `Pasos`; `commands` agrega
+/// `Comandos aplicados`) y, si se pidió, guarda el estado.
+///
+/// **Orden:** primero se imprime el resumen y recién después se guarda; si el guardado falla, el
+/// resumen (válido: la simulación terminó bien) ya salió por stdout y el error va a stderr con
+/// código 1. La línea `Guardado: <ruta>` sólo aparece si el guardado tuvo éxito.
+fn finish(
+    out: &mut dyn Write,
+    sim: &Sim,
+    game_data: &GameData,
+    elapsed: u64,
+    show_commands: bool,
+    save: Option<&Path>,
+) -> Result<(), CliError> {
     let date = sim
         .date()
         .map_err(|error| CliError::Sim(error.to_string()))?;
     // Si stdout está cerrado no hay a quién avisar.
-    let _ = write!(out, "Años simulados: {years}\nSemilla: {seed}\n");
-    let _ = writeln!(out, "Incremento: {}", increment.name());
-    if let Some((path, count)) = &script_info {
-        let noun = if *count == 1 { "comando" } else { "comandos" };
-        let _ = writeln!(out, "Script: {path} ({count} {noun})");
-    }
     let _ = writeln!(out, "Pasos: {}", sim.steps());
-    if script_info.is_some() {
+    if show_commands {
         // Si alguno hubiera fallado, la corrida ya habría terminado con error.
         let _ = writeln!(out, "Comandos aplicados: {}", sim.command_history().len());
     }
@@ -284,7 +283,99 @@ pub fn run(options: &RunOptions<'_>, out: &mut dyn Write) -> Result<(), CliError
         sim.state_hash(),
         format_duration(elapsed, sim.steps()),
     );
+    if let Some(path) = save {
+        sim.save_to_file(path, Some(game_data)).map_err(|error| {
+            CliError::Save(format!("no se pudo guardar en {}: {error}", path.display()))
+        })?;
+        let _ = writeln!(out, "Guardado: {}", path.display());
+    }
     Ok(())
+}
+
+/// Ejecuta `run` y escribe el resumen en `out`.
+///
+/// # Errors
+///
+/// [`CliError::Data`] si los datos no cargan o no validan; [`CliError::Script`] si el script no
+/// se lee, es inválido o un comando falla; [`CliError::Sim`] si la simulación falla (desborde,
+/// falta de progreso, fecha fuera de rango); [`CliError::Save`] si falla `--save`.
+pub fn run(options: &RunOptions<'_>, out: &mut dyn Write) -> Result<(), CliError> {
+    let RunOptions {
+        data_dir,
+        seed,
+        years,
+        increment,
+        script,
+        save,
+    } = *options;
+    let data = load_data(data_dir)?;
+    let total = checked_total(years)?;
+    // El script se lee, valida y construye completo ANTES de correr nada.
+    let script = script
+        .map(|path| {
+            let loaded = Script::load(path, &CommandRegistry::builtin())
+                .and_then(|script| script.check_range(total / SECONDS_PER_DAY).map(|()| script))
+                .map_err(|error| CliError::Script(format!("script {}: {error}", path.display())))?;
+            Ok::<_, CliError>((path, loaded))
+        })
+        .transpose()?;
+    let mut sim = Sim::new(Scenario::from_game_data(&data), seed);
+
+    let script_info = script
+        .as_ref()
+        .map(|(path, script)| (path.display().to_string(), script.entries.len()));
+    let watch = Stopwatch::start();
+    match script {
+        None => advance_total(&mut sim, increment.increment(), total)?,
+        Some((path, script)) => run_script(&mut sim, increment.increment(), total, script, path)?,
+    }
+    let elapsed = watch.elapsed_millis();
+
+    let _ = write!(out, "Años simulados: {years}\nSemilla: {seed}\n");
+    let _ = writeln!(out, "Incremento: {}", increment.name());
+    if let Some((path, count)) = &script_info {
+        let noun = if *count == 1 { "comando" } else { "comandos" };
+        let _ = writeln!(out, "Script: {path} ({count} {noun})");
+    }
+    finish(out, &sim, &data, elapsed, script_info.is_some(), save)
+}
+
+/// Ejecuta `load`: carga un guardado, continúa `years` años y escribe el mismo resumen que `run`.
+///
+/// La semilla sale del guardado (se informa en `Semilla`). `Años simulados` cuenta los años de
+/// **esta** invocación y `Pasos`, los del guardado más los nuevos. Sin script: los `at` de un
+/// script serían ambiguos (¿desde el inicio de la partida o desde lo cargado?), así que no se
+/// soporta. Los datos se verifican contra la huella del guardado.
+///
+/// # Errors
+///
+/// [`CliError::Data`] si los datos no cargan; [`CliError::Save`] si el guardado no se puede leer
+/// o no corresponde a los datos (o falla `--save`); [`CliError::Sim`] si la simulación falla.
+pub fn load(options: &LoadOptions<'_>, out: &mut dyn Write) -> Result<(), CliError> {
+    let LoadOptions {
+        data_dir,
+        file,
+        years,
+        increment,
+        save,
+    } = *options;
+    let data = load_data(data_dir)?;
+    let total = checked_total(years)?;
+    let mut sim = Sim::load_from_file(file, Some(&data)).map_err(|error| {
+        CliError::Save(format!("no se pudo cargar {}: {error}", file.display()))
+    })?;
+    let origin = sim
+        .date()
+        .map_err(|error| CliError::Sim(error.to_string()))?;
+
+    let watch = Stopwatch::start();
+    advance_total(&mut sim, increment.increment(), total)?;
+    let elapsed = watch.elapsed_millis();
+
+    let _ = writeln!(out, "Origen: {} ({origin})", file.display());
+    let _ = write!(out, "Años simulados: {years}\nSemilla: {}\n", sim.seed());
+    let _ = writeln!(out, "Incremento: {}", increment.name());
+    finish(out, &sim, &data, elapsed, false, save)
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //!
 //! Sólo usa la API pública de `heliarca-sim` (`Sim`, `Scenario`...). Este archivo es el esqueleto
 //! de la CLI (#39): argumentos, subcomandos y códigos de salida. `validate-data` (#40) vive en
-//! [`validate`] y `run` (#41) en [`run`](mod@run), con los scripts de comandos (#42) de [`script`];
+//! [`validate`] y `run` (#41) y `load` (#54) en [`run`](mod@run), con los scripts de comandos (#42) de [`script`];
 //! la medición de tiempo real, en [`timing`].
 //!
 //! Códigos de salida: `0` éxito (incluye `--help` y `--version`), `1` error de datos o de
@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use heliarca_sim::{Scenario, Sim};
 
 /// Semilla por defecto cuando no se pasa `--seed`.
@@ -32,9 +32,9 @@ const DEFAULT_SEED: u64 = 0;
     about = "Ejecutor sin interfaz de Heliarca"
 )]
 struct Cli {
-    /// Semilla del generador aleatorio de la simulación.
-    #[arg(long, global = true, value_name = "U64", default_value_t = DEFAULT_SEED)]
-    seed: u64,
+    /// Semilla del generador aleatorio de la simulación (por defecto 0; no aplica a `load`).
+    #[arg(long, global = true, value_name = "U64")]
+    seed: Option<u64>,
 
     /// Directorio con los datos del juego.
     #[arg(long, global = true, value_name = "RUTA", default_value = "data")]
@@ -43,6 +43,13 @@ struct Cli {
     /// Sin subcomando se imprime el banner con la versión del núcleo y la fecha inicial.
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+impl Cli {
+    /// Semilla efectiva: la pasada o [`DEFAULT_SEED`].
+    fn seed(&self) -> u64 {
+        self.seed.unwrap_or(DEFAULT_SEED)
+    }
 }
 
 /// Subcomandos disponibles.
@@ -64,6 +71,29 @@ enum Command {
         /// Script JSON de comandos a enviar en momentos dados (ver el README, «Scripts de comandos»).
         #[arg(long, value_name = "ARCHIVO")]
         script: Option<PathBuf>,
+        /// Guarda el estado final en este archivo (escritura atómica; extensión recomendada `.sav.zst`).
+        #[arg(long, value_name = "ARCHIVO")]
+        save: Option<PathBuf>,
+    },
+    /// Carga un guardado, continúa N años e imprime lo mismo que `run` (la semilla viene del guardado).
+    Load {
+        /// Guardado a cargar (`.sav.zst`).
+        #[arg(value_name = "ARCHIVO")]
+        file: PathBuf,
+        /// Cantidad de años a continuar (0 a 10000; un año son 365 días).
+        #[arg(
+            long,
+            value_name = "N",
+            default_value_t = run::DEFAULT_YEARS,
+            value_parser = clap::value_parser!(u32).range(0..=i64::from(run::MAX_YEARS))
+        )]
+        years: u32,
+        /// Incremento de tiempo de cada paso.
+        #[arg(long, value_enum, default_value_t = run::IncrementArg::D1)]
+        increment: run::IncrementArg,
+        /// Vuelve a guardar el estado final en este archivo (puede ser el mismo que se cargó).
+        #[arg(long, value_name = "ARCHIVO")]
+        save: Option<PathBuf>,
     },
     /// Valida los archivos de datos de `--data-dir` e imprime todos los errores (código 1 si hay).
     ValidateData,
@@ -84,6 +114,10 @@ enum CliError {
     /// El script de `run --script` no se pudo leer, es inválido o un comando falló (una línea).
     #[error("{0}")]
     Script(String),
+    /// No se pudo guardar (`--save`) o cargar (`load`) un archivo de guardado, o no corresponde a
+    /// los datos (una línea).
+    #[error("{0}")]
+    Save(String),
     /// `validate-data` encontró errores en los datos (se imprimen uno por línea).
     #[error("{}", .0.summary())]
     InvalidData(validate::Report),
@@ -95,7 +129,11 @@ impl CliError {
         match self {
             // clap: 0 para ayuda/versión, 2 para errores de uso.
             Self::Usage(error) => u8::try_from(error.exit_code()).unwrap_or(2),
-            Self::Data(_) | Self::Sim(_) | Self::Script(_) | Self::InvalidData(_) => 1,
+            Self::Data(_)
+            | Self::Sim(_)
+            | Self::Script(_)
+            | Self::Save(_)
+            | Self::InvalidData(_) => 1,
         }
     }
 }
@@ -116,26 +154,53 @@ where
     T: Into<OsString> + Clone,
 {
     let cli = Cli::try_parse_from(args).map_err(CliError::Usage)?;
+    let seed = cli.seed();
     match cli.command {
         None => {
             // Si stdout está cerrado no hay a quién avisar.
-            let _ = writeln!(out, "{}", banner(cli.seed));
+            let _ = writeln!(out, "{}", banner(seed));
             Ok(())
         }
         Some(Command::Run {
             years,
             increment,
             script,
+            save,
         }) => run::run(
             &run::RunOptions {
                 data_dir: &cli.data_dir,
-                seed: cli.seed,
+                seed,
                 years,
                 increment,
                 script: script.as_deref(),
+                save: save.as_deref(),
             },
             out,
         ),
+        Some(Command::Load {
+            file,
+            years,
+            increment,
+            save,
+        }) => {
+            // La semilla vive en el guardado: aceptarla en silencio engañaría a quien la pasa.
+            if cli.seed.is_some() {
+                return Err(CliError::Usage(Cli::command().error(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "`--seed` no aplica a `load`: la semilla viene del guardado",
+                )));
+            }
+            run::load(
+                &run::LoadOptions {
+                    data_dir: &cli.data_dir,
+                    file: &file,
+                    years,
+                    increment,
+                    save: save.as_deref(),
+                },
+                out,
+            )
+        }
         Some(Command::ValidateData) => {
             let report = validate::validate(&cli.data_dir);
             if report.errors.is_empty() {
@@ -164,7 +229,7 @@ where
                     let target = if code == 0 { out } else { err };
                     let _ = write!(target, "{}", usage.render());
                 }
-                CliError::Sim(_) | CliError::Script(_) => {
+                CliError::Sim(_) | CliError::Script(_) | CliError::Save(_) => {
                     let _ = writeln!(err, "error: {error}");
                 }
                 CliError::Data(lines) => {
@@ -228,18 +293,18 @@ mod tests {
     #[test]
     fn parsea_seed_y_data_dir_globales() {
         let cli = Cli::try_parse_from(["h", "--seed", "42", "--data-dir", "x", "run"]).unwrap();
-        assert_eq!(cli.seed, 42);
+        assert_eq!(cli.seed(), 42);
         assert_eq!(cli.data_dir, PathBuf::from("x"));
         // Los globales también valen después del subcomando.
         let cli = Cli::try_parse_from(["h", "validate-data", "--seed", "7"]).unwrap();
-        assert_eq!(cli.seed, 7);
+        assert_eq!(cli.seed(), 7);
         assert_eq!(cli.command, Some(Command::ValidateData));
     }
 
     #[test]
     fn los_valores_por_defecto_son_semilla_0_y_data() {
         let cli = Cli::try_parse_from(["h", "run"]).unwrap();
-        assert_eq!(cli.seed, 0);
+        assert_eq!(cli.seed(), 0);
         assert_eq!(cli.data_dir, PathBuf::from("data"));
     }
 
@@ -251,7 +316,8 @@ mod tests {
             Some(Command::Run {
                 years: 40,
                 increment: run::IncrementArg::D1,
-                script: None
+                script: None,
+                save: None
             })
         );
         let cli = Cli::try_parse_from(["h", "run", "--years", "3", "--increment", "d30"]).unwrap();
@@ -260,7 +326,8 @@ mod tests {
             Some(Command::Run {
                 years: 3,
                 increment: run::IncrementArg::D30,
-                script: None
+                script: None,
+                save: None
             })
         );
     }

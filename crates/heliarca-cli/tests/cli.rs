@@ -815,3 +815,381 @@ fn el_script_se_valida_antes_de_correr_aunque_sea_largo() {
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).contains("entrada 2"));
 }
+
+// ---- run --save y load (#54) ----
+
+/// Directorio propio de un test para guardados (en `target/`, sin reloj), vaciado al empezar.
+fn save_dir(name: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("saves")
+        .join(name);
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn s(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+/// Corre `load` sobre el `data/` real.
+fn load_real(file: &Path, extra: &[&str]) -> Output {
+    let data = real_data();
+    let mut all = vec!["load", s(file), "--data-dir", s(&data)];
+    all.extend_from_slice(extra);
+    cli(&all)
+}
+
+fn ok(output: &Output) -> String {
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    text(&output.stdout)
+}
+
+fn hash_of(output: &Output) -> String {
+    field(&ok(output), "Hash de estado").to_string()
+}
+
+/// Un frame zstd con un único bloque crudo (sin compresión) que contiene `content`.
+fn raw_zstd(content: &[u8]) -> Vec<u8> {
+    let len = u32::try_from(content.len()).unwrap();
+    let mut frame = vec![0x28, 0xB5, 0x2F, 0xFD, 0xA0];
+    frame.extend_from_slice(&len.to_le_bytes());
+    frame.extend_from_slice(&(1 | (len << 3)).to_le_bytes()[..3]);
+    frame.extend_from_slice(content);
+    frame
+}
+
+#[test]
+fn cargar_y_continuar_da_el_mismo_hash_que_no_interrumpir() {
+    let dir = save_dir("ida-y-vuelta");
+    for (inc, first, rest) in [
+        ("d1", "10", "30"),
+        ("d5", "10", "30"),
+        ("d30", "10", "30"),
+        ("h1", "1", "2"),
+    ] {
+        let file = dir.join(format!("{inc}.sav.zst"));
+        let saved = run_real(&[
+            "--years",
+            first,
+            "--seed",
+            "1",
+            "--increment",
+            inc,
+            "--save",
+            s(&file),
+        ]);
+        let out = ok(&saved);
+        assert!(out.contains("Guardado: "), "{out}");
+        let loaded = load_real(&file, &["--years", rest, "--increment", inc]);
+        let total = (first.parse::<u32>().unwrap() + rest.parse::<u32>().unwrap()).to_string();
+        let full = run_real(&["--years", &total, "--seed", "1", "--increment", inc]);
+        assert_eq!(hash_of(&loaded), hash_of(&full), "incremento {inc}");
+        let (l, f) = (text(&loaded.stdout), text(&full.stdout));
+        assert_eq!(field(&l, "Fecha final"), field(&f, "Fecha final"));
+        assert_eq!(field(&l, "Eventos"), field(&f, "Eventos"));
+        assert_eq!(field(&l, "Semilla"), "1", "la semilla viene del guardado");
+    }
+}
+
+#[test]
+fn con_script_en_la_parte_inicial_el_hash_tambien_coincide() {
+    let dir = save_dir("con-script");
+    let script = script_file(
+        "para-guardar.json",
+        marks(&[(0, "a"), (100, "b"), (3000, "c")]),
+    );
+    let file = dir.join("s.sav.zst");
+    ok(&run_script(
+        &script,
+        &["--years", "10", "--seed", "3", "--save", s(&file)],
+    ));
+    let loaded = load_real(&file, &["--years", "30"]);
+    let full = run_script(&script, &["--years", "40", "--seed", "3"]);
+    assert_eq!(hash_of(&loaded), hash_of(&full));
+}
+
+#[test]
+fn load_con_save_encadena_guardados_y_sobrescribe_el_mismo_archivo() {
+    let dir = save_dir("encadenado");
+    let file = dir.join("a.sav.zst");
+    ok(&run_real(&[
+        "--years",
+        "5",
+        "--seed",
+        "2",
+        "--save",
+        s(&file),
+    ]));
+    // Vuelve a guardar sobre el mismo archivo, dos veces.
+    for _ in 0..2 {
+        ok(&load_real(&file, &["--years", "5", "--save", s(&file)]));
+    }
+    let loaded = load_real(&file, &["--years", "5"]);
+    let full = run_real(&["--years", "20", "--seed", "2"]);
+    assert_eq!(hash_of(&loaded), hash_of(&full));
+    // La escritura atómica no deja temporales.
+    let names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["a.sav.zst"], "temporales sobrantes: {names:?}");
+}
+
+#[test]
+fn guardar_sobre_un_archivo_existente_lo_reemplaza() {
+    let dir = save_dir("sobrescribe");
+    let file = dir.join("x.sav.zst");
+    fs::write(&file, b"basura previa").unwrap();
+    ok(&run_real(&[
+        "--years",
+        "2",
+        "--seed",
+        "1",
+        "--save",
+        s(&file),
+    ]));
+    let loaded = load_real(&file, &["--years", "0"]);
+    let full = run_real(&["--years", "2", "--seed", "1"]);
+    assert_eq!(hash_of(&loaded), hash_of(&full));
+}
+
+#[test]
+fn la_salida_de_load_tiene_etiquetas_estables_y_el_origen() {
+    let dir = save_dir("salida");
+    let file = dir.join("o.sav.zst");
+    ok(&run_real(&[
+        "--years",
+        "3",
+        "--seed",
+        "9",
+        "--save",
+        s(&file),
+    ]));
+    let out = ok(&load_real(
+        &file,
+        &["--years", "2", "--save", s(&dir.join("n.sav.zst"))],
+    ));
+    assert_eq!(
+        labels(&out),
+        [
+            "Origen",
+            "Años simulados",
+            "Semilla",
+            "Incremento",
+            "Pasos",
+            "Fecha final",
+            "Eventos",
+            "Hash de estado",
+            "Duración real",
+            "Guardado"
+        ],
+        "{out}"
+    );
+    assert!(out.starts_with("Origen: "), "{out}");
+    assert_eq!(field(&out, "Fecha final"), "Año 6, día 1, 00:00:00");
+    assert_eq!(field(&out, "Años simulados"), "2");
+    assert_eq!(field(&out, "Pasos"), "1825");
+    assert!(is_hash(field(&out, "Hash de estado")));
+    // Determinista salvo la duración.
+    let again = ok(&load_real(
+        &file,
+        &["--years", "2", "--save", s(&dir.join("n.sav.zst"))],
+    ));
+    assert_eq!(without_duration(&out), without_duration(&again));
+}
+
+#[test]
+fn load_con_anos_0_conserva_el_estado() {
+    let dir = save_dir("anos-0");
+    let file = dir.join("z.sav.zst");
+    let saved = ok(&run_real(&[
+        "--years",
+        "4",
+        "--seed",
+        "5",
+        "--save",
+        s(&file),
+    ]));
+    let out = ok(&load_real(&file, &["--years", "0"]));
+    assert_eq!(
+        field(&out, "Hash de estado"),
+        field(&saved, "Hash de estado")
+    );
+    assert_eq!(field(&out, "Fecha final"), field(&saved, "Fecha final"));
+}
+
+#[test]
+fn si_el_guardado_falla_el_resumen_sale_pero_el_codigo_es_1() {
+    let dir = save_dir("falla-guardado");
+    let file = dir.join("no-existe").join("x.sav.zst");
+    let output = run_real(&["--years", "1", "--seed", "1", "--save", s(&file)]);
+    assert_eq!(output.status.code(), Some(1));
+    let out = text(&output.stdout);
+    assert!(is_hash(field(&out, "Hash de estado")), "{out}");
+    assert!(!out.contains("Guardado:"), "{out}");
+    let err = text(&output.stderr);
+    assert!(err.starts_with("error: no se pudo guardar en "), "{err}");
+    assert!(!file.exists());
+}
+
+/// `load` de `file` debe salir con 1, mencionar `parts` en stderr y no dejar nada en stdout.
+fn assert_load_error(file: &Path, parts: &[&str]) {
+    let output = load_real(file, &["--years", "1"]);
+    let err = text(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{err}");
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    assert!(!err.contains("panicked"), "{err}");
+    assert!(err.starts_with("error: no se pudo cargar "), "{err}");
+    for part in parts {
+        assert!(err.contains(part), "falta «{part}» en: {err}");
+    }
+}
+
+#[test]
+fn load_de_archivos_inservibles_sale_con_1_sin_panic() {
+    let dir = save_dir("inservibles");
+    assert_load_error(&dir.join("no-existe.sav.zst"), &["no-existe.sav.zst"]);
+
+    let empty = dir.join("vacio.sav.zst");
+    fs::write(&empty, b"").unwrap();
+    assert_load_error(&empty, &["no es zstd"]);
+
+    let text_file = dir.join("texto.sav.zst");
+    fs::write(&text_file, b"{\"format_version\":1}").unwrap();
+    assert_load_error(&text_file, &["no es zstd"]);
+
+    let binary = dir.join("binario.sav.zst");
+    let bytes: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+    fs::write(&binary, bytes).unwrap();
+    assert_load_error(&binary, &[]);
+
+    // Firma de zstd válida con basura detrás.
+    let garbage = dir.join("basura.sav.zst");
+    fs::write(
+        &garbage,
+        [0x28, 0xB5, 0x2F, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+    )
+    .unwrap();
+    assert_load_error(&garbage, &[]);
+
+    // Un directorio en lugar de un archivo.
+    assert_load_error(&dir, &[]);
+
+    // Un guardado real truncado a la mitad y con el último byte cambiado.
+    let good = dir.join("bueno.sav.zst");
+    ok(&run_real(&[
+        "--years",
+        "2",
+        "--seed",
+        "1",
+        "--save",
+        s(&good),
+    ]));
+    let bytes = fs::read(&good).unwrap();
+    let truncated = dir.join("truncado.sav.zst");
+    fs::write(&truncated, &bytes[..bytes.len() / 2]).unwrap();
+    assert_load_error(&truncated, &["truncado"]);
+    let mut flipped = bytes;
+    let last = flipped.len() - 1;
+    flipped[last] ^= 0xFF;
+    let flipped_file = dir.join("corrupto.sav.zst");
+    fs::write(&flipped_file, flipped).unwrap();
+    let output = load_real(&flipped_file, &["--years", "1"]);
+    assert!(matches!(output.status.code(), Some(0 | 1)));
+    assert!(!text(&output.stderr).contains("panicked"));
+}
+
+#[test]
+fn load_de_una_version_futura_o_vieja_sale_con_1() {
+    let dir = save_dir("versiones");
+    let future = dir.join("futuro.sav.zst");
+    fs::write(&future, raw_zstd(br#"{"format_version":999}"#)).unwrap();
+    assert_load_error(&future, &["999", "más nueva"]);
+
+    // El frame crudo es válido: sin `format_version` el error es el del contenido, no el de zstd.
+    let missing = dir.join("sin-version.sav.zst");
+    fs::write(&missing, raw_zstd(b"{}")).unwrap();
+    assert_load_error(&missing, &["format_version"]);
+
+    // Un guardado v0 (el fixture histórico) se migra, pero no trae la huella de datos: con
+    // `data/` la carga falla de forma clara (1), nunca con panic.
+    let v0 = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../heliarca-sim/tests/fixtures/save_v0.json"),
+    )
+    .unwrap();
+    let file = dir.join("v0.sav.zst");
+    fs::write(&file, raw_zstd(&v0)).unwrap();
+    let output = load_real(&file, &["--years", "0"]);
+    assert!(!text(&output.stderr).contains("panicked"));
+    assert!(matches!(output.status.code(), Some(0 | 1)));
+}
+
+#[test]
+fn load_con_datos_distintos_sale_con_1_por_la_huella() {
+    let dir = save_dir("huella");
+    let file = dir.join("h.sav.zst");
+    ok(&run_real(&[
+        "--years",
+        "1",
+        "--seed",
+        "1",
+        "--save",
+        s(&file),
+    ]));
+
+    let data = fixture("huella-datos");
+    write(
+        &data,
+        "goods.json",
+        r#"[{ "id": "good.hierro", "number": 2 }]"#,
+    );
+    let output = cli(&["load", s(&file), "--data-dir", s(&data)]);
+    let err = text(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{err}");
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    assert!(err.contains("no coinciden con los del guardado"), "{err}");
+
+    // Con los datos originales sí carga.
+    ok(&load_real(&file, &["--years", "0"]));
+}
+
+#[test]
+fn load_con_datos_invalidos_o_inexistentes_sale_con_1() {
+    let dir = save_dir("datos-malos");
+    let file = dir.join("d.sav.zst");
+    ok(&run_real(&["--years", "1", "--save", s(&file)]));
+    let output = cli(&["load", s(&file), "--data-dir", "no/existe/nunca"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text(&output.stderr).contains("el directorio de datos no existe"));
+}
+
+#[test]
+fn load_y_save_con_argumentos_invalidos_salen_con_2() {
+    let dir = save_dir("uso");
+    let file = dir.join("u.sav.zst");
+    ok(&run_real(&["--years", "1", "--save", s(&file)]));
+    let script = script_file("uso.json", marks(&[(0, "a")]));
+    let data = real_data();
+    for args in [
+        vec!["load"],
+        vec!["load", s(&file), "--years", "-1"],
+        vec!["load", s(&file), "--years", "10001"],
+        vec!["load", s(&file), "--years", "abc"],
+        vec!["load", s(&file), "--increment", "x"],
+        vec!["load", s(&file), "--script", s(&script)],
+        vec!["load", s(&file), "--seed", "1"],
+        vec!["--seed", "1", "load", s(&file)],
+        vec!["load", s(&file), "--save"],
+        vec!["run", "--save"],
+    ] {
+        let mut all = args.clone();
+        all.extend(["--data-dir", s(&data)]);
+        let output = cli(&all);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert!(!output.stderr.is_empty(), "{args:?}");
+    }
+    let output = cli(&["load", s(&file), "--seed", "1"]);
+    assert!(text(&output.stderr).contains("la semilla viene del guardado"));
+}
