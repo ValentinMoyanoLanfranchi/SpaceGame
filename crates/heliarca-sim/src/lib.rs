@@ -134,7 +134,10 @@ pub use invariants::Violation;
 pub use loc::{LOC_DOMAINS, Loc, is_valid_key};
 pub use params::{Params, ParamsError};
 pub use scenario::Scenario;
-pub use sim::{AdvanceError, AdvanceResult, DataFingerprint, SAVE_FORMAT_VERSION, SaveError, Sim};
+pub use sim::{
+    AdvanceError, AdvanceResult, DEFAULT_MAX_SAVE_BYTES, DataFingerprint, SAVE_FILE_EXTENSION,
+    SAVE_FORMAT_VERSION, SaveError, SaveFileError, Sim,
+};
 pub use state_hash::StateHash;
 pub use time::{
     Calendar, CalendarDate, CalendarError, DAYS_PER_YEAR, FIRST_DAY, FIRST_YEAR, HOURS_PER_DAY,

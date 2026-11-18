@@ -203,8 +203,10 @@ pub struct Sim {
 }
 
 mod save;
+mod save_file;
 
 pub use save::{DataFingerprint, SAVE_FORMAT_VERSION, SaveError};
+pub use save_file::{DEFAULT_MAX_SAVE_BYTES, SAVE_FILE_EXTENSION, SaveFileError};
 
 /// Invariantes propios de `Sim` (los de cada módulo están en sus constantes `INVARIANTS`).
 pub(crate) const INVARIANTS: &[FnInvariant] = &[
