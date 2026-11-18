@@ -53,7 +53,7 @@ Efecto sobre el repo: `[profile.dev.package."*"] opt-level = 3` ya compila las d
 
 ## 4. Licencias
 
-`godot` y sus crates hijos son **MPL-2.0** (copyleft *por archivo*: sólo obliga a publicar modificaciones a los archivos MPL de gdext; el código propio puede seguir siendo propietario y enlazarse con ellos). **El dueño del repo ya decidió permitir MPL-2.0** en `deny.toml`; **este PR no lo toca** (se agrega junto con la primera dependencia real, #58/#59).
+`godot` y sus crates hijos son **MPL-2.0** (copyleft *por archivo*: sólo obliga a publicar modificaciones a los archivos MPL de gdext; el código propio puede seguir siendo propietario y enlazarse con ellos). **El dueño del repo ya decidió permitir MPL-2.0** en `deny.toml`; **se agregó a `deny.toml` en #58** (junto con la primera dependencia real).
 
 Licencias de todo el grafo (`cargo metadata` del crate temporal, con `godot 0.5.5` + `api-4-7`):
 
@@ -66,7 +66,7 @@ Licencias de todo el grafo (`cargo metadata` del crate temporal, con `godot 0.5.
 
 Corrida de `cargo deny check licenses` con el `deny.toml` actual sobre ese crate: **8 rechazos, todos MPL-2.0** (los 8 crates de la primera fila). **No aparece ninguna otra licencia nueva**: el resto ya está cubierto por la lista (MIT, Apache-2.0, Unicode-3.0). `nanoserde`, `nanoserde-derive`, `heck` y `venial` son dependencias de compilación/macros y no llegan al binario. `Cargo.lock`, en cambio, sí incluirá todos esos crates cuando `heliarca-godot` la use.
 
-Pendiente para #58/#59 (decisión ya tomada, sólo ejecutarla): agregar `"MPL-2.0"` a `[licenses] allow` de `deny.toml` con el comentario del motivo.
+Hecho en #58: `"MPL-2.0"` está en `[licenses] allow` de `deny.toml` con el comentario del motivo. No se agregó ninguna otra licencia.
 
 ## 5. Alternativas descartadas
 
@@ -87,12 +87,12 @@ Pendiente para #58/#59 (decisión ya tomada, sólo ejecutarla): agregar `"MPL-2.
 | Necesidad de un binario de Godot para compilar | **No hace falta** con `api-4-7`. Sí hace falta para abrir el proyecto y probarlo (instalar 4.7.2) |
 | Tiempos de compilación | ~60–80 s limpio; incremental ~1,5 s; el caché de CI (#61) absorbe el costo. `opt-level = 3` de dependencias ya está |
 | Recarga en caliente en Windows | Ver §2; se valida en #60 con plan B |
-| `unsafe` en el FFI | `heliarca-godot` hereda `unsafe_code = "deny"`; `#[gdextension]` exige `unsafe impl`, así que se relaja con `#[allow(unsafe_code)]` puntual sólo en ese crate (21 §5). `heliarca-sim` sigue con `forbid` |
+| `unsafe` en el FFI | `heliarca-godot` hereda `unsafe_code = "deny"`; `#[gdextension]` exige `unsafe impl`, así que se relaja con `#![allow(unsafe_code)]` sólo en el módulo `extension` de ese crate (21 §5; en #58 se comprobó que un `#[allow]` sobre el `impl` no alcanza, la expansión de `#[gdextension]` lo ignora). `heliarca-sim` sigue con `forbid` |
 | Licencia MPL-2.0 | Ya aprobada por el dueño (§4) |
 
 ## 7. Pasos siguientes
 
-- **#58 (M0.7.1.2) — Proyecto Godot con `.gdextension`:** crear `godot/` con `project.godot` para 4.7 y el `.gdextension` (rutas a la DLL/so/dylib de debug y release, `compatibility_minimum = "4.7"`, `reloadable = true`). Hacer que `heliarca-godot` dependa de `godot = { workspace = true }`, con `[lints] workspace = true` y el `#[allow(unsafe_code)]` mínimo; agregar `MPL-2.0` a `deny.toml`; `check-sim-isolation.sh` sigue exigiendo que `heliarca-sim` no tenga `godot`.
+- **#58 (M0.7.1.2) — Proyecto Godot con `.gdextension`:** crear `godot/` con `project.godot` para 4.7 y el `.gdextension` (rutas a la DLL/so/dylib de debug y release, `compatibility_minimum = "4.7"`, `reloadable = true`; hecho en #58, con rutas directas a `../target` y sin `godot/bin/`). Hacer que `heliarca-godot` dependa de `godot = { workspace = true }`, con `[lints] workspace = true` y el `#[allow(unsafe_code)]` mínimo; agregar `MPL-2.0` a `deny.toml`; `check-sim-isolation.sh` sigue exigiendo que `heliarca-sim` no tenga `godot`.
 - **#59 (M0.7.1.3) — `SimHandle` con `hello()`:** clase `#[derive(GodotClass)]` que sólo delega en `heliarca-sim` (p. ej. `sim_version()`); probarla desde GDScript en Godot 4.7.2.
 - **#60 (M0.7.1.4) — Recarga en caliente y guía:** probar recompilar con el editor abierto en Windows; documentar el procedimiento y el plan B; completar la sección «Godot» del README con la instalación de 4.7.2 y `cargo build -p heliarca-godot`.
 - **#61 (M0.7.1.5) — Compilar el `cdylib` en CI:** ya está en la matriz Ubuntu y Windows (`cargo build --workspace --locked`); queda agregar caché de dependencias y, si se quiere, un chequeo de que la versión de `godot` en `Cargo.lock` es `0.5.5` y la de Godot documentada coincide.

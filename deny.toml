@@ -31,6 +31,11 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
+    # Decisión del dueño del repo (2026-11-17): MPL-2.0 es copyleft por archivo y no afecta al
+    # código propio. Necesaria por los crates de godot-rust (gdext) que usa heliarca-godot:
+    # godot, godot-core, godot-ffi, godot-codegen, godot-macros, godot-bindings, godot-cell y
+    # gdextension-api. Ver Documentacion/24_decision_godot_gdext.md §4.
+    "MPL-2.0",
 ]
 confidence-threshold = 0.9
 # La lista es una política, no un inventario: no avisar por licencias aún sin usar.

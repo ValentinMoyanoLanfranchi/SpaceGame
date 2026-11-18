@@ -1,0 +1,17 @@
+; Extensión de Heliarca (crate `heliarca-godot`). Las rutas son relativas a `res://` (la carpeta
+; `godot/`) y apuntan directo al `target/` del workspace: `cargo build -p heliarca-godot` deja
+; la biblioteca ahí y el editor la toma sin copiar nada.
+[configuration]
+
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.7"
+reloadable = true
+
+[libraries]
+
+windows.debug.x86_64 = "res://../target/debug/heliarca_godot.dll"
+windows.release.x86_64 = "res://../target/release/heliarca_godot.dll"
+linux.debug.x86_64 = "res://../target/debug/libheliarca_godot.so"
+linux.release.x86_64 = "res://../target/release/libheliarca_godot.so"
+macos.debug = "res://../target/debug/libheliarca_godot.dylib"
+macos.release = "res://../target/release/libheliarca_godot.dylib"
