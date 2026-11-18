@@ -172,7 +172,7 @@
 37. Probabilidades base de fallos de lanzamiento y de misión. (07, 12, 22)
 
 ### Desarrollo
-38. Confirmar gdext + Godot con un pequeño prototipo (versión, recarga en caliente) antes de comprometer la UI. (21)
+38. ~~Confirmar gdext + Godot con un pequeño prototipo (versión, recarga en caliente) antes de comprometer la UI.~~ → **versión decidida: Godot 4.7.2 + gdext `=0.5.5` con `api-4-7`, compila el `cdylib` en Windows sin Godot instalado (24)**. Queda por confirmar en la práctica la **recarga en caliente** en Windows (#60, M0.7.1.4). (21, 24)
 39. Qué parte de la UI va en escenas del editor y cuál programática; estilo visual mínimo. (21)
 40. ¿Hay `cargo` y acceso a crates en el entorno de Claude para compilar y probar en la conversación? (21)
 

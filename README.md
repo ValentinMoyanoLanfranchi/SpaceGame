@@ -16,6 +16,7 @@ Está en [`Documentacion/`](Documentacion/). Puntos de entrada:
 | [21 Alcance del MVP y arquitectura](Documentacion/21_alcance_mvp_y_arquitectura.md) | Qué entra en el MVP y cómo se construye |
 | [22 Datos iniciales del MVP](Documentacion/22_datos_iniciales_mvp.md) | Números concretos a cargar en JSON |
 | [23 Plan de desarrollo](Documentacion/23_plan_de_desarrollo.md) | Cómo se ejecuta el MVP paso a paso (hitos, jerarquía, reglas) |
+| [24 Decisión Godot y gdext](Documentacion/24_decision_godot_gdext.md) | Versiones fijadas de Godot 4 y gdext, licencias, riesgos |
 
 ## Requisitos
 Para compilar el núcleo de simulación necesitás:

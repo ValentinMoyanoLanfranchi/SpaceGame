@@ -10,6 +10,14 @@ rust-version = "1.100.0"
 license = "UNLICENSED"
 publish = false
 
+# Versiones fijadas de Godot y gdext (decisión en Documentacion/24_decision_godot_gdext.md).
+# Todavía no las usa ningún crate: `heliarca-godot` las adopta en M0.7.1.2/M0.7.1.3 (#58/#59)
+# con `godot = { workspace = true }`. Versión EXACTA (`=`) porque el API de gdext cambia
+# entre versiones menores. `api-4-7` = API de Godot 4.7 (runtime 4.7.x, vigente 4.7.2);
+# sin `api-custom`, así que no hace falta un binario de Godot para compilar.
+[workspace.dependencies]
+godot = { version = "=0.5.5", features = ["api-4-7"] }
+
 # Lints compartidos; cada crate los hereda con `[lints] workspace = true`.
 # - Se usa el grupo `pedantic` completo en warn (prioridad -1, para que los allows lo venzan)
 #   y se silencia solo lo que es ruido para este proyecto, en vez de mantener una lista blanca.
