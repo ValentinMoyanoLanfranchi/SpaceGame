@@ -117,6 +117,8 @@ mod proptest_config;
 mod registry;
 #[allow(dead_code)]
 mod rng;
+#[cfg(test)]
+mod roundtrip_tests;
 mod scenario;
 #[allow(dead_code)]
 mod schedule;
