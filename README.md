@@ -238,7 +238,14 @@ Cada uno imprime `OK: ...` si pasa y sale con error si no. Protegen, entre otras
 Con `cargo install --locked cargo-deny` instalado, `cargo deny check` aplica la política de [Dependencias y auditoría](#dependencias-y-auditoría-cargo-deny). Es opcional en local: el CI lo corre igual. Necesita red, porque descarga la base de RustSec.
 
 ### Godot
-> **Pendiente:** se completa en M0.7 (instalación de Godot 4, compilación de `heliarca-godot` y cómo abrir el proyecto). Por ahora `cargo build --workspace` compila `heliarca-godot` como un crate común, sin Godot instalado.
+El proyecto está en [`godot/`](godot/) y se abre con **Godot 4.7.2** (la versión fijada, ver [doc 24](Documentacion/24_decision_godot_gdext.md)); bajá el editor estándar (no .NET) de [godotengine.org](https://godotengine.org/download/archive/4.7.2-stable/). Para compilar no hace falta Godot.
+
+1. Compilá la extensión: `cargo build -p heliarca-godot`. Deja `target/debug/heliarca_godot.dll` (Windows), `libheliarca_godot.so` (Linux) o `libheliarca_godot.dylib` (macOS).
+2. Abrí la carpeta `godot/` desde el Project Manager de Godot. La consola del editor tiene que mostrar `Initialize godot-rust (API v4.7...)` y `Heliarca: extensión cargada (...)`, sin errores.
+
+[`godot/heliarca.gdextension`](godot/heliarca.gdextension) apunta directo al `target/` del workspace (`res://../target/{debug,release}/...`), así que no hay que copiar nada. El editor usa la entrada `debug` (`cargo build`); la `release` es para el juego exportado (`cargo build --release`). Si falta la biblioteca, el editor imprime `GDExtension dynamic library not found: 'res://heliarca.gdextension'` y abre el proyecto sin la extensión: compilá y reabrí. En Windows puede avisar que acortó el nombre de `heliarca_godot.pdb` al copiar la DLL para la recarga en caliente: es inocuo. La guía completa y la recarga en caliente se documentan en #60.
+
+`godot/.godot/` (caché del editor) está ignorada por git; el `heliarca.gdextension.uid` sí se versiona (recomendación oficial de Godot 4.4+, para que no se rompan las referencias entre recursos).
 
 ## Cómo se trabaja
 El desarrollo está planificado en **issues de GitHub** con jerarquía `Hito → Épica → Historia → Tarea`. Leé [CONTRIBUTING.md](CONTRIBUTING.md) y el [plan de desarrollo](Documentacion/23_plan_de_desarrollo.md). Todo cambio entra por **Pull Request**; `main` está protegida (ver [SECURITY.md](SECURITY.md)).

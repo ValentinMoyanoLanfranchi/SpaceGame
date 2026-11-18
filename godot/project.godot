@@ -1,0 +1,10 @@
+; Proyecto Godot de Heliarca. Godot 4.7.x (ver Documentacion/24_decision_godot_gdext.md).
+; No editar `config_version`: lo gestiona el editor.
+
+config_version=5
+
+[application]
+
+config/name="Heliarca"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.7")
