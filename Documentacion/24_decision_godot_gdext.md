@@ -1,6 +1,6 @@
 # 24 — Decisión: versiones de Godot 4 y gdext
 
-> v0.1 · Fecha de la decisión: **2026-11-17** (verificada contra fuentes de noviembre de 2026). Spike **M0.7.1.1** (#57). Cierra la parte de «versión» de la pregunta abierta nº 38 de 17; la parte de «recarga en caliente» se confirma con la práctica en #60 (M0.7.1.4). Contexto de arquitectura: 21 §5 (`heliarca-godot` es un `cdylib` fino, sin lógica de juego).
+> v0.1 · Fecha de la decisión: **2026-11-17** (verificada contra fuentes de noviembre de 2026). Spike **M0.7.1.1** (#57). Cierra la parte de «versión» de la pregunta abierta nº 38 de 17; la parte de «recarga en caliente» se cerró con la prueba real de #60 (M0.7.1.4, ver §2). Contexto de arquitectura: 21 §5 (`heliarca-godot` es un `cdylib` fino, sin lógica de juego).
 
 ## 1. Decisión
 
@@ -34,7 +34,14 @@ Se usan las features por defecto de `godot` (`__codegen-full`, que genera todas 
 - **Plataformas:** Windows, Linux y macOS son las de escritorio soportadas (el CI del repo ya cubre Ubuntu y Windows; macOS queda para cuando se haga el *export*). Android, iOS y Wasm son experimentales en gdext y no aplican al MVP.
 - **cdylib en Windows MSVC:** sin problemas en la prueba (ver §3): el `cdylib` se enlaza y genera la DLL con el toolchain MSVC por defecto, sin LLVM ni binario de Godot. Es el mismo tipo de crate que ya tiene `heliarca-godot`.
 - **Mínimo de Godot:** gdext 0.5.x exige Godot >= 4.2; no es una restricción para nosotros.
-- **Recarga en caliente (relevante para #60):** gdext tiene soporte y lo prueba en su CI (ejemplo `hot-reload`); sus parches recientes arreglan pánicos al recargar (0.5.4 en Linux, 0.5.5 con `OnEditor<Gd<T>>`). Requiere `reloadable = true` en el `.gdextension` y funciona desde Godot 4.2. **Incertidumbre en Windows:** históricamente el editor bloquea la DLL abierta y no deja recompilar con el editor abierto (issue godotengine/godot#66231, cerrado en 4.2 con la recarga de GDExtension, pero sin confirmación explícita del bloqueo de archivo). **Se confirma en #60** con una prueba real en Windows; plan B documentado: cerrar el proyecto antes de recompilar, o copiar la DLL con otro nombre (`heliarca_godot_dev.dll`) hacia `godot/bin` y apuntar el `.gdextension` a esa copia.
+- **Recarga en caliente (relevante para #60):** gdext tiene soporte y lo prueba en su CI (ejemplo `hot-reload`); sus parches recientes arreglan pánicos al recargar (0.5.4 en Linux, 0.5.5 con `OnEditor<Gd<T>>`). Requiere `reloadable = true` en el `.gdextension` y funciona desde Godot 4.2. **Incertidumbre en Windows (cerrada en #60):** se temía que el editor bloqueara la DLL abierta y no dejara recompilar (issue godotengine/godot#66231, cerrado en 4.2 con la recarga de GDExtension, sin confirmación explícita del bloqueo de archivo).
+  - **Resultado de #60 (2026-11-18, Windows 11, Godot 4.7.2, gdext 0.5.5, `cargo build -p heliarca-godot` con el editor abierto sobre `godot/`): la recarga en caliente funciona, con límites.**
+  - *Sin bloqueo:* el editor no mantiene abierto `target/debug/heliarca_godot.dll`; carga una copia `~heliarca_godot.dll` (más `~heliarca__0.pdb`, de ahí el warning `copy_and_rename_pdb`) en la misma carpeta, y `cargo build` termina con código 0 en cada recompilación. El plan B de «cerrar el editor antes de recompilar» no hace falta.
+  - *Recarga:* se dispara cuando la ventana del editor recupera el foco (con la ventana ya enfocada no se recargó en más de un minuto). Tras cambiar el texto de `hello_text` y recompilar, la consola mostró de nuevo `Initialize godot-rust ...` y `Heliarca: extensión cargada ...`, y `SimHandle.new().hello()` devolvió el texto nuevo sin reiniciar el editor.
+  - *Instancias vivas:* un `SimHandle` creado antes de la recarga sigue siendo un objeto válido y usa el código nuevo (también los métodos agregados), **pero su estado Rust se reinicia**: con un campo `marker` puesto en 42, tras recargar (aun con el mismo diseño de la clase) volvió a su valor de `init` (0). Un `Sim` avanzado dentro de un `SimHandle` se perdería igual. Lo guardado del lado de GDScript no se toca.
+  - *Límites:* sí se recargaron cambios de cuerpos, campos agregados, métodos `#[func]` agregados, cambio del tipo de retorno y una clase nueva (aparece en `ClassDB`). Un cambio de firma rompe las llamadas ya escritas contra la vieja (error de script en el llamador, el editor sigue vivo). Una escena corriendo como proceso aparte (`godot --path godot`, o F5 desde el editor) **no se recarga y sí bloquea la DLL**: `cargo build` falla con `failed to remove file ... heliarca_godot.dll: Access is denied. (os error 5)`; hay que cerrarla antes de recompilar. Sin probar: quitar métodos o campos, la escena corriendo dentro del editor, Linux y macOS.
+  - *Plan B* (sólo si el editor o una escena bloquean la DLL): cerrar el editor y la escena antes de recompilar, o copiar la DLL con otro nombre (`heliarca_godot_dev.dll`) hacia `godot/bin` y apuntar el `.gdextension` a esa copia.
+  - *Cómo se probó:* un plugin de editor temporal (no versionado) con un `SimHandle` guardado y un log por segundo, mientras se cambiaba `hello_text` y se recompilaba; el foco se alternó por código (Win32). El procedimiento para el equipo está en el README, sección «Godot».
 
 ## 3. Prueba de compilación (Windows, toolchain 1.100.0, sin Godot instalado)
 
@@ -86,7 +93,7 @@ Hecho en #58: `"MPL-2.0"` está en `[licenses] allow` de `deny.toml` con el come
 | Descargas / red al compilar | Con `api-4-7` no hay descargas (el JSON viene dentro del crate `gdextension-api`); `api-custom` queda prohibida |
 | Necesidad de un binario de Godot para compilar | **No hace falta** con `api-4-7`. Sí hace falta para abrir el proyecto y probarlo (instalar 4.7.2) |
 | Tiempos de compilación | ~60–80 s limpio; incremental ~1,5 s; el caché de CI (#61) absorbe el costo. `opt-level = 3` de dependencias ya está |
-| Recarga en caliente en Windows | Ver §2; se valida en #60 con plan B |
+| Recarga en caliente en Windows | Probada en #60: funciona (sin bloqueo de la DLL; se reinicia el estado Rust de las instancias vivas; una escena corriendo sí bloquea la DLL). Ver §2 |
 | `unsafe` en el FFI | `heliarca-godot` hereda `unsafe_code = "deny"`; `#[gdextension]` exige `unsafe impl`, así que se relaja con `#![allow(unsafe_code)]` sólo en el módulo `extension` de ese crate (21 §5; en #58 se comprobó que un `#[allow]` sobre el `impl` no alcanza, la expansión de `#[gdextension]` lo ignora). `heliarca-sim` sigue con `forbid` |
 | Licencia MPL-2.0 | Ya aprobada por el dueño (§4) |
 
@@ -94,7 +101,7 @@ Hecho en #58: `"MPL-2.0"` está en `[licenses] allow` de `deny.toml` con el come
 
 - **#58 (M0.7.1.2) — Proyecto Godot con `.gdextension`:** crear `godot/` con `project.godot` para 4.7 y el `.gdextension` (rutas a la DLL/so/dylib de debug y release, `compatibility_minimum = "4.7"`, `reloadable = true`; hecho en #58, con rutas directas a `../target` y sin `godot/bin/`). Hacer que `heliarca-godot` dependa de `godot = { workspace = true }`, con `[lints] workspace = true` y el `#![allow(unsafe_code)]` mínimo, sólo en el módulo `extension`; agregar `MPL-2.0` a `deny.toml`; `check-sim-isolation.sh` sigue exigiendo que `heliarca-sim` no tenga `godot`.
 - **#59 (M0.7.1.3) — `SimHandle` con `hello()`:** clase `#[derive(GodotClass)]` que sólo delega en `heliarca-sim` (p. ej. `sim_version()`); probarla desde GDScript en Godot 4.7.2.
-- **#60 (M0.7.1.4) — Recarga en caliente y guía:** probar recompilar con el editor abierto en Windows; documentar el procedimiento y el plan B; completar la sección «Godot» del README con la instalación de 4.7.2 y `cargo build -p heliarca-godot`.
+- **#60 (M0.7.1.4) — Recarga en caliente y guía:** hecho: la recarga se probó en Windows (resultado en §2) y la sección «Godot» del README tiene el procedimiento de instalar 4.7.2, compilar, importar y abrir, probado en una copia limpia.
 - **#61 (M0.7.1.5) — Compilar el `cdylib` en CI:** ya está en la matriz Ubuntu y Windows (`cargo build --workspace --locked`); queda agregar caché de dependencias y, si se quiere, un chequeo de que la versión de `godot` en `Cargo.lock` es `0.5.5` y la de Godot documentada coincide.
 - Cuando salga Godot 4.8: evaluar subir (nueva entrada en este documento), no actualizar «en silencio».
 
