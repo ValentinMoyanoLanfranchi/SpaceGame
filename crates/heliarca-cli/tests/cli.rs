@@ -235,9 +235,8 @@ fn el_ejemplo_del_readme_tiene_el_formato_de_la_salida_real() {
 /// Archivos de datos, en el orden del cargador.
 const FILES: [&str; DATA_FILES.len()] = DATA_FILES;
 
-const TIERRA: &str =
-    r#"{"id":"body.tierra","kind":"planet","radius_km":6371.0,"detect_difficulty":0}"#;
-const LUNA: &str = r#"{"id":"body.luna","kind":"moon","parent":"body.tierra","orbit":{"type":"circular","radius_km":384400.0,"period_days":27.32},"radius_km":1737.4,"detect_difficulty":1}"#;
+const SOL: &str = r#"{"id":"body.sol","kind":"star","radius_km":695700.0,"mass_kg":1.989e30,"detect_difficulty":0}"#;
+const LUNA: &str = r#"{"id":"body.luna","kind":"moon","parent":"body.sol","orbit":{"type":"circular","radius_km":384400.0,"period_days":27.32},"radius_km":1737.4,"mass_kg":7.35e22,"detect_difficulty":1}"#;
 
 fn real_data() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
@@ -326,7 +325,7 @@ fn juntan_todos_los_errores_de_archivos_en_una_sola_corrida() {
         &dir,
         "bodies.json",
         format!(
-            r#"[{TIERRA},{{"id":"body.x","kind":"moon","radius_km":"grande","detect_difficulty":1,"color":"rojo"}}]"#
+            r#"[{SOL},{{"id":"body.x","kind":"moon","parent":"body.sol","radius_km":"grande","mass_kg":1.0,"detect_difficulty":1,"color":"rojo"}}]"#
         ),
     );
     write(&dir, "goods.json", "[{ esto no es json"); // sintaxis
@@ -367,7 +366,7 @@ fn un_problema_no_se_informa_dos_veces() {
         &dir,
         "bodies.json",
         format!(
-            r#"[{TIERRA},{{"id":"body.x","kind":"moon","radius_km":"grande","detect_difficulty":1}}]"#
+            r#"[{SOL},{{"id":"body.x","kind":"moon","parent":"body.sol","radius_km":"grande","mass_kg":1.0,"detect_difficulty":1}}]"#
         ),
     );
     let (code, _, err) = validate(&dir);
@@ -384,7 +383,7 @@ fn el_cargador_informa_lo_que_el_esquema_no_expresa() {
     write(
         &dir,
         "bodies.json",
-        r#"[{"id":"body.x","kind":"moon","radius_km":1.0,"detect_difficulty":3.0}]"#,
+        r#"[{"id":"body.x","kind":"moon","parent":"body.sol","radius_km":1.0,"mass_kg":1.0,"detect_difficulty":3.0}]"#,
     );
     let (code, _, err) = validate(&dir);
     assert_eq!(code, Some(1));
@@ -402,11 +401,11 @@ fn juntan_todos_los_errores_del_registro_en_una_sola_corrida() {
         &dir,
         "bodies.json",
         format!(
-            r#"[{TIERRA},{LUNA},{LUNA},
-            {{"id":"body.a","kind":"moon","parent":"body.b","radius_km":1.0,"detect_difficulty":1}},
-            {{"id":"body.b","kind":"moon","parent":"body.a","radius_km":1.0,"detect_difficulty":1}},
-            {{"id":"body.c","kind":"moon","parent":"body.fantasma","radius_km":1.0,"detect_difficulty":1}},
-            {{"id":"body.d","kind":"moon","radius_km":1.0,"detect_difficulty":1,
+            r#"[{SOL},{LUNA},{LUNA},
+            {{"id":"body.a","kind":"moon","parent":"body.b","radius_km":1.0,"mass_kg":1.0,"detect_difficulty":1}},
+            {{"id":"body.b","kind":"moon","parent":"body.a","radius_km":1.0,"mass_kg":1.0,"detect_difficulty":1}},
+            {{"id":"body.c","kind":"moon","parent":"body.fantasma","radius_km":1.0,"mass_kg":1.0,"detect_difficulty":1}},
+            {{"id":"body.d","kind":"moon","parent":"body.sol","radius_km":1.0,"mass_kg":1.0,"detect_difficulty":1,
               "deposits":[{{"good":"good.nada","reserve_mt":1.0,"access":0.5}}]}}]"#
         ),
     );
@@ -442,7 +441,7 @@ fn si_hay_errores_de_archivo_no_se_valida_el_registro() {
     write(
         &dir,
         "bodies.json",
-        r#"[{"id":"body.c","kind":"moon","parent":"body.fantasma","radius_km":1.0,"detect_difficulty":1}]"#,
+        r#"[{"id":"body.c","kind":"moon","parent":"body.fantasma","radius_km":1.0,"mass_kg":1.0,"detect_difficulty":1}]"#,
     );
     write(&dir, "goods.json", "[");
     let (code, _, err) = validate(&dir);
@@ -454,7 +453,7 @@ fn si_hay_errores_de_archivo_no_se_valida_el_registro() {
 #[test]
 fn datos_validos_no_triviales_salen_con_0() {
     let dir = fixture("valido");
-    write(&dir, "bodies.json", format!("[{TIERRA},{LUNA}]"));
+    write(&dir, "bodies.json", format!("[{SOL},{LUNA}]"));
     let (code, out, err) = validate(&dir);
     assert_eq!(code, Some(0), "{err:?}");
     assert_eq!(

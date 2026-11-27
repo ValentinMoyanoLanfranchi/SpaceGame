@@ -20,31 +20,31 @@
 
 ### 1.1 Cuerpos (21)
 
-`Dif.` = dificultad de detección por telescopio (0–10; ver 1.3). `Hab.` = habitabilidad para colonias (0–1).
+`Dif.` = dificultad de detección por telescopio (0–10; ver 1.3). `Hab.` = habitabilidad para colonias (0–1). `Masa (kg)` = masa real aproximada (`mass_kg` en los datos), en notación científica (`7,35e22` = 7,35 × 10²²); la usa la vista con rangos (1.3). Las masas de Aurelio y Brisa son ficticias: salen de su radio con una densidad de ~3.500 kg/m³ (metálico) y ~1.500 kg/m³ (helado).
 
-| ID | Cuerpo | Tipo | Padre | Órbita | Período (d) | Radio (km) | Dif. | Hab. |
-|---|---|---|---|---|---|---|---|---|
-| sol | Sol | Estrella | — | — | — | 695.700 | 0 | — |
-| mercurio | Mercurio | Planeta | Sol | 0,387 UA | 88 | 2.440 | 3 | 0,05 |
-| venus | Venus | Planeta | Sol | 0,723 UA | 225 | 6.052 | 2 | 0,02 |
-| tierra | **Tierra** | Planeta | Sol | 1,000 UA | 365 | 6.371 | 0 | 1,0 |
-| luna | Luna | Luna | Tierra | 384.400 km | 27,3 | 1.737 | 0 | 0,30 |
-| marte | Marte | Planeta | Sol | 1,524 UA | 687 | 3.390 | 2 | 0,45 |
-| fobos | Fobos | Luna | Marte | 9.376 km | 0,32 | 11 | 6 | 0,10 |
-| deimos | Deimos | Luna | Marte | 23.463 km | 1,26 | 6 | 6 | 0,10 |
-| aurelio | **Aurelio** *(ficticio)* | Asteroide | Sol | 2,20 UA | 1.200 | 40 | 7 | 0,10 |
-| vesta | Vesta | Asteroide | Sol | 2,36 UA | 1.325 | 263 | 5 | 0,15 |
-| ceres | Ceres | Planeta enano | Sol | 2,77 UA | 1.681 | 473 | 5 | 0,20 |
-| palas | Palas | Asteroide | Sol | 2,77 UA | 1.686 | 256 | 6 | 0,10 |
-| brisa | **Brisa** *(ficticio)* | Asteroide | Sol | 2,95 UA | 1.850 | 30 | 7 | 0,10 |
-| higiea | Higiea | Asteroide | Sol | 3,14 UA | 2.030 | 217 | 6 | 0,10 |
-| jupiter | Júpiter | Gigante gaseoso | Sol | 5,203 UA | 4.333 | 69.911 | 2 | — |
-| io | Ío | Luna | Júpiter | 421.700 km | 1,77 | 1.822 | 4 | 0,02 |
-| europa | Europa | Luna | Júpiter | 671.034 km | 3,55 | 1.561 | 4 | 0,10 |
-| ganimedes | Ganímedes | Luna | Júpiter | 1.070.412 km | 7,15 | 2.634 | 4 | 0,15 |
-| calisto | Calisto | Luna | Júpiter | 1.882.709 km | 16,7 | 2.410 | 4 | 0,15 |
-| saturno | Saturno | Gigante gaseoso | Sol | 9,537 UA | 10.759 | 58.232 | 3 | — |
-| titan | Titán | Luna | Saturno | 1.221.870 km | 15,9 | 2.575 | 5 | 0,20 |
+| ID | Cuerpo | Tipo | Padre | Órbita | Período (d) | Radio (km) | Masa (kg) | Dif. | Hab. |
+|---|---|---|---|---|---|---|---|---|---|
+| sol | Sol | Estrella | — | — | — | 695.700 | 1,989e30 | 0 | — |
+| mercurio | Mercurio | Planeta | Sol | 0,387 UA | 88 | 2.440 | 3,30e23 | 3 | 0,05 |
+| venus | Venus | Planeta | Sol | 0,723 UA | 225 | 6.052 | 4,87e24 | 2 | 0,02 |
+| tierra | **Tierra** | Planeta | Sol | 1,000 UA | 365 | 6.371 | 5,97e24 | 0 | 1,0 |
+| luna | Luna | Luna | Tierra | 384.400 km | 27,3 | 1.737 | 7,35e22 | 0 | 0,30 |
+| marte | Marte | Planeta | Sol | 1,524 UA | 687 | 3.390 | 6,42e23 | 2 | 0,45 |
+| fobos | Fobos | Luna | Marte | 9.376 km | 0,32 | 11 | 1,07e16 | 6 | 0,10 |
+| deimos | Deimos | Luna | Marte | 23.463 km | 1,26 | 6 | 1,48e15 | 6 | 0,10 |
+| aurelio | **Aurelio** *(ficticio)* | Asteroide | Sol | 2,20 UA | 1.200 | 40 | 9,4e17 | 7 | 0,10 |
+| vesta | Vesta | Asteroide | Sol | 2,36 UA | 1.325 | 263 | 2,59e20 | 5 | 0,15 |
+| ceres | Ceres | Planeta enano | Sol | 2,77 UA | 1.681 | 473 | 9,38e20 | 5 | 0,20 |
+| palas | Palas | Asteroide | Sol | 2,77 UA | 1.686 | 256 | 2,04e20 | 6 | 0,10 |
+| brisa | **Brisa** *(ficticio)* | Asteroide | Sol | 2,95 UA | 1.850 | 30 | 1,7e17 | 7 | 0,10 |
+| higiea | Higiea | Asteroide | Sol | 3,14 UA | 2.030 | 217 | 8,7e19 | 6 | 0,10 |
+| jupiter | Júpiter | Gigante gaseoso | Sol | 5,203 UA | 4.333 | 69.911 | 1,898e27 | 2 | — |
+| io | Ío | Luna | Júpiter | 421.700 km | 1,77 | 1.822 | 8,93e22 | 4 | 0,02 |
+| europa | Europa | Luna | Júpiter | 671.034 km | 3,55 | 1.561 | 4,80e22 | 4 | 0,10 |
+| ganimedes | Ganímedes | Luna | Júpiter | 1.070.412 km | 7,15 | 2.634 | 1,48e23 | 4 | 0,15 |
+| calisto | Calisto | Luna | Júpiter | 1.882.709 km | 16,7 | 2.410 | 1,08e23 | 4 | 0,15 |
+| saturno | Saturno | Gigante gaseoso | Sol | 9,537 UA | 10.759 | 58.232 | 5,68e26 | 3 | — |
+| titan | Titán | Luna | Saturno | 1.221.870 km | 15,9 | 2.575 | 1,35e23 | 5 | 0,20 |
 
 ### 1.2 Punto de salto
 
@@ -371,6 +371,22 @@ data/
   params.json          # parámetros globales (días por semana, mes y año; §0)
 ```
 
+### 11.1 Cuerpos (`bodies.json`)
+
+| Campo | Contenido |
+|---|---|
+| `id` | Texto estable (`body.*`) |
+| `kind` | `star`, `planet`, `dwarf_planet`, `moon`, `asteroid` o `gas_giant` |
+| `parent` | Id del cuerpo padre; **sólo `star` puede no tenerlo** |
+| `orbit` | Órbita circular (`type: "circular"`); ausente en la estrella. Radio en `radius_au` (UA) **o** `radius_km` (km), exactamente uno; `period_days` |
+| `radius_km` | Radio del cuerpo, en km (> 0) |
+| `mass_kg` | Masa, en kg (> 0); obligatorio (1.1) |
+| `detect_difficulty` | Entero de 0 a 10 |
+| `habitability` | 0–1; ausente si no aplica |
+| `deposits` | Yacimientos: `good`, `reserve_mt` (> 0) y `access` (0–1) |
+
+Los valores numéricos deben ser finitos. El cargador rechaza lo que no cumpla, con archivo, id y campo.
+
 Ejemplo (cuerpo):
 
 ```json
@@ -380,6 +396,7 @@ Ejemplo (cuerpo):
   "parent": "body.tierra",
   "orbit": { "type": "circular", "radius_km": 384400, "period_days": 27.3 },
   "radius_km": 1737,
+  "mass_kg": 7.35e22,
   "detect_difficulty": 0,
   "habitability": 0.30,
   "deposits": [

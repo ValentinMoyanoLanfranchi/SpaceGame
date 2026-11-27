@@ -74,16 +74,17 @@
 //! # Ejemplo
 //!
 //! ```
-//! use heliarca_sim::data::{Body, Entry, GameData, Registry, RegistryError};
+//! use heliarca_sim::data::{Body, BodyKind, Entry, GameData, Registry, RegistryError};
 //! use heliarca_sim::ids::BodyId;
 //!
 //! fn cuerpo(id: &str, parent: Option<&str>) -> Body {
 //!     Body {
 //!         id: id.to_owned(),
-//!         kind: "moon".to_owned(),
+//!         kind: BodyKind::Moon,
 //!         parent: parent.map(str::to_owned),
 //!         orbit: None,
 //!         radius_km: 1737.0,
+//!         mass_kg: 7.35e22,
 //!         detect_difficulty: 0,
 //!         habitability: None,
 //!         deposits: Vec::new(),
@@ -848,15 +849,16 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::data::{Body, Deposit};
+    use crate::data::{Body, BodyKind, Deposit};
 
     fn body(id: &str, parent: Option<&str>, goods: &[&str]) -> Body {
         Body {
             id: id.to_owned(),
-            kind: "moon".to_owned(),
+            kind: BodyKind::Moon,
             parent: parent.map(str::to_owned),
             orbit: None,
             radius_km: 1.0,
+            mass_kg: 1.0,
             detect_difficulty: 0,
             habitability: None,
             deposits: goods

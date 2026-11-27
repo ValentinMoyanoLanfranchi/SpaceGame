@@ -32,18 +32,19 @@
 //!
 //! Doc 22 §11 sólo define el esquema de `bodies.json` (con un ejemplo); de los demás archivos sólo da
 //! el nombre. Por eso [`Body`] es tipado y estricto (`deny_unknown_fields`: un campo mal escrito es
-//! un error) y el resto usa modelos mínimos y extensibles ([`Entry`]: sólo `id` + campos libres)
+//! un error; sus rangos los comprueba [`Body::validate`] al cargar) y el resto usa modelos mínimos y extensibles ([`Entry`]: sólo `id` + campos libres)
 //! que las tareas de datos posteriores reemplazarán por tipos propios. Los ids son `String`: su
 //! formato y unicidad, y las referencias cruzadas, los valida el registro de ids (#32), no el
 //! cargador. Las listas conservan el orden del archivo; los mapas son `BTreeMap`.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -83,17 +84,88 @@ pub enum OrbitKind {
     Circular,
 }
 
+/// Radio de una órbita, en la unidad en que está escrito en los datos: UA en las órbitas
+/// heliocéntricas y km en las lunas (doc 22 §0). No se convierte al cargar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OrbitRadius {
+    /// En unidades astronómicas (`radius_au` en el JSON).
+    Au(f64),
+    /// En kilómetros (`radius_km` en el JSON).
+    Km(f64),
+}
+
 /// Órbita de un cuerpo (`orbit` en `bodies.json`).
-#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(try_from = "OrbitFields")]
 pub struct Orbit {
     /// Tipo de órbita (campo `type` en el JSON).
-    #[serde(rename = "type")]
     pub kind: OrbitKind,
-    /// Radio orbital, en km.
-    pub radius_km: f64,
+    /// Radio orbital (`radius_au` o `radius_km`, exactamente uno).
+    pub radius: OrbitRadius,
     /// Período, en días.
     pub period_days: f64,
+}
+
+/// Órbita circular de un cuerpo. El radio va en `radius_au` o en `radius_km` (exactamente uno).
+// Forma en el JSON de [`Orbit`]: de acá sale su esquema.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "Orbit")]
+#[schemars(extend("oneOf" = [
+    {"required": ["radius_au"], "properties": {"radius_au": {"type": "number"}}},
+    {"required": ["radius_km"], "properties": {"radius_km": {"type": "number"}}}
+]))]
+struct OrbitFields {
+    /// Tipo de órbita.
+    #[serde(rename = "type")]
+    kind: OrbitKind,
+    /// Radio orbital, en UA (órbitas heliocéntricas).
+    #[serde(default)]
+    #[schemars(extend("exclusiveMinimum" = 0))]
+    radius_au: Option<f64>,
+    /// Radio orbital, en km (lunas).
+    #[serde(default)]
+    #[schemars(extend("exclusiveMinimum" = 0))]
+    radius_km: Option<f64>,
+    /// Período, en días.
+    #[schemars(extend("exclusiveMinimum" = 0))]
+    period_days: f64,
+}
+
+// El esquema es el de la forma en el JSON. Derivarlo en `Orbit` exigiría un esquema de
+// `OrbitRadius`, que no existe en el archivo.
+impl JsonSchema for Orbit {
+    fn schema_name() -> Cow<'static, str> {
+        OrbitFields::schema_name()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        OrbitFields::schema_id()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        OrbitFields::json_schema(generator)
+    }
+}
+
+impl TryFrom<OrbitFields> for Orbit {
+    type Error = &'static str;
+
+    fn try_from(fields: OrbitFields) -> Result<Self, Self::Error> {
+        let radius = match (fields.radius_au, fields.radius_km) {
+            (Some(au), None) => OrbitRadius::Au(au),
+            (None, Some(km)) => OrbitRadius::Km(km),
+            (None, None) => return Err("falta el radio orbital: indicá `radius_au` o `radius_km`"),
+            (Some(_), Some(_)) => {
+                return Err("indicá sólo uno de `radius_au` o `radius_km`, no los dos");
+            }
+        };
+        Ok(Self {
+            kind: fields.kind,
+            radius,
+            period_days: fields.period_days,
+        })
+    }
 }
 
 /// Yacimiento de un cuerpo (`deposits[]` en `bodies.json`).
@@ -102,36 +174,171 @@ pub struct Orbit {
 pub struct Deposit {
     /// Id de texto del bien (`good.*`).
     pub good: String,
-    /// Reserva, en megatoneladas.
+    /// Reserva, en megatoneladas (mayor que 0).
+    #[schemars(extend("exclusiveMinimum" = 0))]
     pub reserve_mt: f64,
     /// Facilidad de acceso (0–1).
+    #[schemars(range(min = 0, max = 1))]
     pub access: f64,
 }
 
-/// Cuerpo celeste (entrada de `bodies.json`, doc 22 §11).
+/// Tipo de cuerpo (`kind` en `bodies.json`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyKind {
+    /// Estrella: el único tipo que puede no tener padre.
+    Star,
+    /// Planeta rocoso.
+    Planet,
+    /// Planeta enano.
+    DwarfPlanet,
+    /// Luna.
+    Moon,
+    /// Asteroide.
+    Asteroid,
+    /// Gigante gaseoso.
+    GasGiant,
+}
+
+/// Cuerpo celeste (entrada de `bodies.json`, doc 22 §1.1 y §11). Sólo `star` puede no tener
+/// `parent`.
+///
+/// Deserializarlo comprueba la forma; los rangos y la regla del padre, [`Body::validate`] (el
+/// cargador la llama por cada entrada).
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend(
+    "if" = {"required": ["kind"], "properties": {"kind": {"const": "star"}}},
+    "else" = {"required": ["parent"], "properties": {"parent": {"type": "string"}}}
+))]
 pub struct Body {
     /// Id de texto (`body.*`).
     pub id: String,
-    /// Tipo de cuerpo (`moon`, `planet`...). El doc no fija la lista: es texto libre por ahora.
-    pub kind: String,
-    /// Id del cuerpo padre; ausente para la estrella.
+    /// Tipo de cuerpo.
+    pub kind: BodyKind,
+    /// Id del cuerpo padre; sólo puede faltar en una estrella.
     #[serde(default)]
     pub parent: Option<String>,
     /// Órbita; ausente para la estrella.
     #[serde(default)]
     pub orbit: Option<Orbit>,
-    /// Radio del cuerpo, en km.
+    /// Radio del cuerpo, en km (mayor que 0).
+    #[schemars(extend("exclusiveMinimum" = 0))]
     pub radius_km: f64,
+    /// Masa, en kg (mayor que 0); la usa la vista con rangos (doc 22 §1.3).
+    #[schemars(extend("exclusiveMinimum" = 0))]
+    pub mass_kg: f64,
     /// Dificultad de detección por telescopio (0–10).
+    #[schemars(range(max = Body::MAX_DETECT_DIFFICULTY))]
     pub detect_difficulty: u8,
     /// Habitabilidad (0–1); ausente si no aplica.
     #[serde(default)]
+    #[schemars(range(min = 0, max = 1))]
     pub habitability: Option<f64>,
     /// Yacimientos.
     #[serde(default)]
     pub deposits: Vec<Deposit>,
+}
+
+/// Una regla que un [`Body`] no cumple: el campo y qué le pasa. `Display`: `mass_kg: ...`.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("{field}: {message}")]
+pub struct BodyError {
+    field: String,
+    message: String,
+}
+
+impl BodyError {
+    /// Ruta del campo dentro del cuerpo (`orbit.period_days`, `deposits[1].access`).
+    #[must_use]
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    /// Descripción del problema.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl Body {
+    /// Máximo de la escala de `detect_difficulty` (doc 22 §1.1).
+    pub const MAX_DETECT_DIFFICULTY: u8 = 10;
+
+    /// Valida la regla del padre y los rangos: radios, masa, período y reservas positivos y
+    /// finitos; `detect_difficulty` en 0–10; `habitability` y `access` en 0–1. Las referencias
+    /// (que el padre exista, sin ciclos) las valida [`Registry`].
+    ///
+    /// # Errors
+    ///
+    /// **Todas** las violaciones, en el orden de los campos del modelo.
+    pub fn validate(&self) -> Result<(), Vec<BodyError>> {
+        let mut errors = Vec::new();
+        if self.parent.is_none() && self.kind != BodyKind::Star {
+            push(
+                &mut errors,
+                "parent",
+                "falta: sólo un cuerpo de tipo `star` puede no tener padre".to_owned(),
+            );
+        }
+        if let Some(orbit) = &self.orbit {
+            let (field, radius) = match orbit.radius {
+                OrbitRadius::Au(au) => ("orbit.radius_au", au),
+                OrbitRadius::Km(km) => ("orbit.radius_km", km),
+            };
+            check_positive(&mut errors, field, radius);
+            check_positive(&mut errors, "orbit.period_days", orbit.period_days);
+        }
+        check_positive(&mut errors, "radius_km", self.radius_km);
+        check_positive(&mut errors, "mass_kg", self.mass_kg);
+        if self.detect_difficulty > Self::MAX_DETECT_DIFFICULTY {
+            push(
+                &mut errors,
+                "detect_difficulty",
+                format!(
+                    "fuera de rango: {} (debe estar entre 0 y {})",
+                    self.detect_difficulty,
+                    Self::MAX_DETECT_DIFFICULTY
+                ),
+            );
+        }
+        if let Some(habitability) = self.habitability {
+            check_fraction(&mut errors, "habitability", habitability);
+        }
+        for (i, deposit) in self.deposits.iter().enumerate() {
+            let reserve = format!("deposits[{i}].reserve_mt");
+            check_positive(&mut errors, &reserve, deposit.reserve_mt);
+            let access = format!("deposits[{i}].access");
+            check_fraction(&mut errors, &access, deposit.access);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+fn push(errors: &mut Vec<BodyError>, field: &str, message: String) {
+    errors.push(BodyError {
+        field: field.to_owned(),
+        message,
+    });
+}
+
+fn check_positive(errors: &mut Vec<BodyError>, field: &str, value: f64) {
+    if !(value.is_finite() && value > 0.0) {
+        let message = format!("fuera de rango: {value} (debe ser finito y mayor que 0)");
+        push(errors, field, message);
+    }
+}
+
+fn check_fraction(errors: &mut Vec<BodyError>, field: &str, value: f64) {
+    if !(0.0..=1.0).contains(&value) {
+        let message = format!("fuera de rango: {value} (debe estar entre 0 y 1)");
+        push(errors, field, message);
+    }
 }
 
 /// Entrada mínima y extensible de los archivos cuyo esquema aún no está definido: sólo exige `id`
@@ -325,7 +532,7 @@ impl DataLoader {
             params,
         ] = DATA_FILES;
         let data = GameData {
-            bodies: load_list(dir, bodies, &mut errors),
+            bodies: load_bodies(dir, bodies, &mut errors),
             goods: load_list(dir, goods, &mut errors),
             recipes: load_list(dir, recipes, &mut errors),
             facilities: load_list(dir, facilities, &mut errors),
@@ -433,6 +640,22 @@ fn load_list<T: DeserializeOwned>(
         }
     }
     out
+}
+
+/// Carga `bodies.json` y valida cada cuerpo ([`Body::validate`]): un error por violación.
+fn load_bodies(dir: &Path, file: &'static str, errors: &mut Vec<DataError>) -> Vec<Body> {
+    let bodies: Vec<Body> = load_list(dir, file, errors);
+    for body in &bodies {
+        if let Err(issues) = body.validate() {
+            errors.extend(issues.into_iter().map(|issue| DataError::Schema {
+                file,
+                entry: Some(body.id.clone()),
+                field: Some(issue.field),
+                message: issue.message,
+            }));
+        }
+    }
+    bodies
 }
 
 /// Carga `params.json` (objeto con los parámetros globales): un error por parámetro, con su nombre.

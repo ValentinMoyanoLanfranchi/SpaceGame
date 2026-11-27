@@ -153,34 +153,33 @@ fn el_directorio_de_esquemas_no_molesta_al_cargador() {
 #[test]
 fn un_body_con_tipo_equivocado_no_valida() {
     let v = validator("bodies.json");
-    let bueno =
-        json!([{"id": "body.luna", "kind": "moon", "radius_km": 1737, "detect_difficulty": 0}]);
+    let bueno = json!([{"id": "body.luna", "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": 1737, "detect_difficulty": 0}]);
     assert!(v.is_valid(&bueno));
     for (caso, malo) in [
         (
             "radius_km texto",
-            json!([{"id": "body.luna", "kind": "moon", "radius_km": "grande", "detect_difficulty": 0}]),
+            json!([{"id": "body.luna", "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": "grande", "detect_difficulty": 0}]),
         ),
         (
             "id numérico",
-            json!([{"id": 7, "kind": "moon", "radius_km": 1, "detect_difficulty": 0}]),
+            json!([{"id": 7, "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 0}]),
         ),
         (
             "dificultad fuera de u8",
-            json!([{"id": "b", "kind": "moon", "radius_km": 1, "detect_difficulty": 300}]),
+            json!([{"id": "b", "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 300}]),
         ),
         (
             "dificultad negativa",
-            json!([{"id": "b", "kind": "moon", "radius_km": 1, "detect_difficulty": -1}]),
+            json!([{"id": "b", "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": 1, "detect_difficulty": -1}]),
         ),
         (
             "órbita elíptica",
-            json!([{"id": "b", "kind": "moon", "radius_km": 1, "detect_difficulty": 0,
+            json!([{"id": "b", "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 0,
             "orbit": {"type": "elliptical", "radius_km": 1, "period_days": 1}}]),
         ),
         (
             "yacimientos no es lista",
-            json!([{"id": "b", "kind": "moon", "radius_km": 1, "detect_difficulty": 0, "deposits": {}}]),
+            json!([{"id": "b", "kind": "moon", "parent": "body.tierra", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 0, "deposits": {}}]),
         ),
         ("raíz no es lista", json!({})),
     ] {
@@ -259,18 +258,20 @@ fn casos() -> Vec<(&'static str, String)> {
         ("params.json", inline("[]")),
         (
             "bodies.json",
-            inline(r#"[{"id": "b", "kind": "k", "radius_km": 1, "detect_difficulty": 256}]"#),
-        ),
-        (
-            "bodies.json",
             inline(
-                r#"[{"id": "b", "kind": "k", "radius_km": 1, "detect_difficulty": 1, "habitability": null, "parent": null, "orbit": null}]"#,
+                r#"[{"id": "b", "kind": "star", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 256}]"#,
             ),
         ),
         (
             "bodies.json",
             inline(
-                r#"[{"id": "b", "kind": "k", "radius_km": 1, "detect_difficulty": 1, "orbit": {"type": "circular", "radius_km": 1, "period_days": 2, "e": 0}}]"#,
+                r#"[{"id": "b", "kind": "star", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 1, "habitability": null, "parent": null, "orbit": null}]"#,
+            ),
+        ),
+        (
+            "bodies.json",
+            inline(
+                r#"[{"id": "b", "kind": "star", "mass_kg": 1, "radius_km": 1, "detect_difficulty": 1, "orbit": {"type": "circular", "radius_km": 1, "period_days": 2, "e": 0}}]"#,
             ),
         ),
     ]

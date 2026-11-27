@@ -2,8 +2,10 @@
   {
     "id": "body.luna",
     "kind": "moon",
+    "parent": "body.tierra",
     "orbit": { "type": "circular", "radius_km": 384400, "period_days": "27.3" },
     "radius_km": 1737,
+    "mass_kg": 7.35e22,
     "detect_difficulty": 0
   }
 ]

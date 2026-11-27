@@ -22,8 +22,9 @@
 //!
 //! # Alcance
 //!
-//! El esquema describe la **forma** (tipos, campos requeridos y desconocidos), no las reglas
-//! semánticas que valida el registro de ids (formato de ids, unicidad, referencias cruzadas).
+//! El esquema describe la **forma** (tipos, campos requeridos y desconocidos) y, en `bodies.json`,
+//! los rangos y la regla del padre de [`Body::validate`]; no las reglas que valida el registro de
+//! ids (formato de ids, unicidad, referencias cruzadas).
 //! Un caso conocido de diferencia con el cargador: para un campo entero (`detect_difficulty`) el
 //! esquema acepta `3.0`, que `serde_json` rechaza al deserializar a `u8`.
 

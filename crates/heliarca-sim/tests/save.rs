@@ -3,7 +3,7 @@
 //! Cubre: ida y vuelta con el mismo `state_hash`, continuar tras cargar, formato (`format_version`
 //! primero, salida determinista), rechazo sin pánico de JSON dañado y huella de `data/`.
 
-use heliarca_sim::data::{Body, DataLoader, GameData};
+use heliarca_sim::data::{Body, BodyKind, DataLoader, GameData, Orbit, OrbitKind, OrbitRadius};
 use heliarca_sim::{
     Calendar, CalendarDate, CommandRegistry, Increment, Params, Payload, SAVE_FORMAT_VERSION,
     SaveError, Scenario, Sim, Value,
@@ -416,10 +416,11 @@ fn huella_de_datos() {
 fn la_huella_ve_los_cambios_numericos() {
     let body = |radius_km| Body {
         id: "body.luna".into(),
-        kind: "moon".into(),
+        kind: BodyKind::Moon,
         parent: None,
         orbit: None,
         radius_km,
+        mass_kg: 7.35e22,
         detect_difficulty: 1,
         habitability: Some(0.0),
         deposits: vec![],
@@ -434,6 +435,30 @@ fn la_huella_ve_los_cambios_numericos() {
     assert_ne!(con(1737.4), repo_data().fingerprint());
     // -0 y +0 son la misma cantidad.
     assert_eq!(con(0.0), con(-0.0));
+
+    // La masa, el tipo y la unidad del radio orbital también entran a la huella.
+    let huella = |cambio: &dyn Fn(&mut Body)| {
+        let mut b = body(1737.4);
+        cambio(&mut b);
+        let mut data = repo_data();
+        data.bodies.push(b);
+        data.fingerprint()
+    };
+    let orbita = |radius| {
+        move |b: &mut Body| {
+            b.orbit = Some(Orbit {
+                kind: OrbitKind::Circular,
+                radius,
+                period_days: 1.0,
+            });
+        }
+    };
+    assert_ne!(huella(&|b| b.mass_kg = 7.36e22), con(1737.4));
+    assert_ne!(huella(&|b| b.kind = BodyKind::Asteroid), con(1737.4));
+    assert_ne!(
+        huella(&orbita(OrbitRadius::Au(1.0))),
+        huella(&orbita(OrbitRadius::Km(1.0)))
+    );
 }
 
 proptest! {

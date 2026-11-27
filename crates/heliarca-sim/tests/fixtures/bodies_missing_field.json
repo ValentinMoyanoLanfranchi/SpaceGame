@@ -1,3 +1,3 @@
 [
-  { "id": "body.luna", "radius_km": 1737, "detect_difficulty": 0 }
+  { "id": "body.luna", "radius_km": 1737, "mass_kg": 1e20, "detect_difficulty": 0 }
 ]
