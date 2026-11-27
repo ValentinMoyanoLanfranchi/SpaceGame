@@ -264,3 +264,167 @@ fn la_tabla_de_cuerpos_del_doc_22_da_la_masa_de_los_21() {
     assert_eq!(masses.len(), 21);
     assert!(masses.iter().all(|m| m.is_finite() && *m > 0.0));
 }
+
+/// Valores esperados de un cuerpo del `data/` real (fila de la tabla 22 §1.1).
+struct Fila {
+    id: &'static str,
+    kind: BodyKind,
+    parent: Option<&'static str>,
+    /// Radio orbital y período, en días.
+    orbit: Option<(OrbitRadius, f64)>,
+    radius_km: f64,
+    mass_kg: f64,
+    detect_difficulty: u8,
+    habitability: Option<f64>,
+}
+
+/// Compara el cuerpo `fila.id` del `data/` real con su fila, campo por campo. Los yacimientos
+/// no son de la tabla 22 §1.1 (son de §1.4) y no se comparan acá.
+fn coincide_con_la_tabla(fila: &Fila) {
+    let bodies = DataLoader::load_dir(repo().join("data"))
+        .expect("data/ debe cargar")
+        .bodies;
+    let body = bodies
+        .into_iter()
+        .find(|b| b.id == fila.id)
+        .unwrap_or_else(|| panic!("falta {} en data/bodies.json", fila.id));
+    // Sin `..`: un campo nuevo de `Body` obliga a decidir si se compara.
+    let Body {
+        id,
+        kind,
+        parent,
+        orbit,
+        radius_km,
+        mass_kg,
+        detect_difficulty,
+        habitability,
+        deposits: _,
+    } = body;
+    let orbita_esperada = fila.orbit.map(|(radius, period_days)| Orbit {
+        kind: OrbitKind::Circular,
+        radius,
+        period_days,
+    });
+    assert_eq!(kind, fila.kind, "{id}: kind");
+    assert_eq!(parent.as_deref(), fila.parent, "{id}: parent");
+    assert_eq!(orbit, orbita_esperada, "{id}: orbit");
+    assert_eq!(radius_km, fila.radius_km, "{id}: radius_km");
+    assert_eq!(mass_kg, fila.mass_kg, "{id}: mass_kg");
+    assert_eq!(
+        detect_difficulty, fila.detect_difficulty,
+        "{id}: detect_difficulty"
+    );
+    assert_eq!(habitability, fila.habitability, "{id}: habitability");
+}
+
+#[test]
+fn sol_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.sol",
+        kind: BodyKind::Star,
+        parent: None,
+        orbit: None,
+        radius_km: 695_700.0,
+        mass_kg: 1.989e30,
+        detect_difficulty: 0,
+        habitability: None,
+    });
+}
+
+#[test]
+fn mercurio_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.mercurio",
+        kind: BodyKind::Planet,
+        parent: Some("body.sol"),
+        orbit: Some((OrbitRadius::Au(0.387), 88.0)),
+        radius_km: 2_440.0,
+        mass_kg: 3.30e23,
+        detect_difficulty: 3,
+        habitability: Some(0.05),
+    });
+}
+
+#[test]
+fn venus_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.venus",
+        kind: BodyKind::Planet,
+        parent: Some("body.sol"),
+        orbit: Some((OrbitRadius::Au(0.723), 225.0)),
+        radius_km: 6_052.0,
+        mass_kg: 4.87e24,
+        detect_difficulty: 2,
+        habitability: Some(0.02),
+    });
+}
+
+#[test]
+fn tierra_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.tierra",
+        kind: BodyKind::Planet,
+        parent: Some("body.sol"),
+        orbit: Some((OrbitRadius::Au(1.0), 365.0)),
+        radius_km: 6_371.0,
+        mass_kg: 5.97e24,
+        detect_difficulty: 0,
+        habitability: Some(1.0),
+    });
+}
+
+#[test]
+fn luna_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.luna",
+        kind: BodyKind::Moon,
+        parent: Some("body.tierra"),
+        orbit: Some((OrbitRadius::Km(384_400.0), 27.3)),
+        radius_km: 1_737.0,
+        mass_kg: 7.35e22,
+        detect_difficulty: 0,
+        habitability: Some(0.30),
+    });
+}
+
+#[test]
+fn marte_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.marte",
+        kind: BodyKind::Planet,
+        parent: Some("body.sol"),
+        orbit: Some((OrbitRadius::Au(1.524), 687.0)),
+        radius_km: 3_390.0,
+        mass_kg: 6.42e23,
+        detect_difficulty: 2,
+        habitability: Some(0.45),
+    });
+}
+
+#[test]
+fn fobos_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.fobos",
+        kind: BodyKind::Moon,
+        parent: Some("body.marte"),
+        orbit: Some((OrbitRadius::Km(9_376.0), 0.32)),
+        radius_km: 11.0,
+        mass_kg: 1.07e16,
+        detect_difficulty: 6,
+        habitability: Some(0.10),
+    });
+}
+
+#[test]
+fn deimos_coincide_con_la_tabla() {
+    coincide_con_la_tabla(&Fila {
+        id: "body.deimos",
+        kind: BodyKind::Moon,
+        parent: Some("body.marte"),
+        orbit: Some((OrbitRadius::Km(23_463.0), 1.26)),
+        radius_km: 6.0,
+        mass_kg: 1.48e15,
+        detect_difficulty: 6,
+        habitability: Some(0.10),
+    });
+}

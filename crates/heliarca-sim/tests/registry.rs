@@ -56,7 +56,7 @@ impl Drop for Sandbox {
 #[test]
 fn el_data_real_del_repo_valida_ok() {
     let validated = DataLoader::load_validated(repo_data()).expect("data/ debe validar");
-    assert!(validated.registry.bodies().is_empty());
+    assert!(validated.registry.bodies().get("body.sol").is_some());
 }
 
 #[test]
