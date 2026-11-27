@@ -91,6 +91,10 @@ jobs:
         if: steps.rust.outputs.present == 'true' && runner.os == 'Linux'
         run: bash scripts/ci/check-sim-no-unsafe.sh
 
+      - name: DAYS_PER_YEAR fuera de producción (#439)
+        if: steps.rust.outputs.present == 'true' && runner.os == 'Linux'
+        run: bash scripts/ci/check-days-per-year.sh
+
       # rustup ya viene en los runners; esto instala la versión de rust-toolchain.toml
       # de forma explícita (sin acciones de terceros) en vez de depender de la autoinstalación.
       - name: Instalar toolchain fijado (rustup)
