@@ -1,1 +1,79 @@
-[]
+[
+  {
+    "id": "body.sol",
+    "kind": "star",
+    "radius_km": 695700,
+    "mass_kg": 1.989e30,
+    "detect_difficulty": 0
+  },
+  {
+    "id": "body.mercurio",
+    "kind": "planet",
+    "parent": "body.sol",
+    "orbit": { "type": "circular", "radius_au": 0.387, "period_days": 88 },
+    "radius_km": 2440,
+    "mass_kg": 3.30e23,
+    "detect_difficulty": 3,
+    "habitability": 0.05
+  },
+  {
+    "id": "body.venus",
+    "kind": "planet",
+    "parent": "body.sol",
+    "orbit": { "type": "circular", "radius_au": 0.723, "period_days": 225 },
+    "radius_km": 6052,
+    "mass_kg": 4.87e24,
+    "detect_difficulty": 2,
+    "habitability": 0.02
+  },
+  {
+    "id": "body.tierra",
+    "kind": "planet",
+    "parent": "body.sol",
+    "orbit": { "type": "circular", "radius_au": 1.000, "period_days": 365 },
+    "radius_km": 6371,
+    "mass_kg": 5.97e24,
+    "detect_difficulty": 0,
+    "habitability": 1.0
+  },
+  {
+    "id": "body.luna",
+    "kind": "moon",
+    "parent": "body.tierra",
+    "orbit": { "type": "circular", "radius_km": 384400, "period_days": 27.3 },
+    "radius_km": 1737,
+    "mass_kg": 7.35e22,
+    "detect_difficulty": 0,
+    "habitability": 0.30
+  },
+  {
+    "id": "body.marte",
+    "kind": "planet",
+    "parent": "body.sol",
+    "orbit": { "type": "circular", "radius_au": 1.524, "period_days": 687 },
+    "radius_km": 3390,
+    "mass_kg": 6.42e23,
+    "detect_difficulty": 2,
+    "habitability": 0.45
+  },
+  {
+    "id": "body.fobos",
+    "kind": "moon",
+    "parent": "body.marte",
+    "orbit": { "type": "circular", "radius_km": 9376, "period_days": 0.32 },
+    "radius_km": 11,
+    "mass_kg": 1.07e16,
+    "detect_difficulty": 6,
+    "habitability": 0.10
+  },
+  {
+    "id": "body.deimos",
+    "kind": "moon",
+    "parent": "body.marte",
+    "orbit": { "type": "circular", "radius_km": 23463, "period_days": 1.26 },
+    "radius_km": 6,
+    "mass_kg": 1.48e15,
+    "detect_difficulty": 6,
+    "habitability": 0.10
+  }
+]
