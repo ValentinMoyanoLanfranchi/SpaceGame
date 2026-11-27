@@ -69,6 +69,10 @@ jobs:
           tar -xzf "$dir/$archivo" -C "$dir" actionlint
           "$dir/actionlint" -color .github/workflows/*.y*ml
 
+      - name: Verificación del cdylib de Godot presente en el CI
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/check-godot-cdylib.sh
+
       - name: Detectar workspace de Rust
         id: rust
         run: |
@@ -116,6 +120,11 @@ jobs:
       - name: Lockfile al día (build --locked)
         if: steps.rust.outputs.present == 'true'
         run: cargo build --workspace --locked
+
+      # `build --workspace` ya compila `heliarca-godot`, pero sin notar si deja de producir la
+      # biblioteca. Corre en ambos SO y sin `if:` (lo exige check-godot-cdylib.sh).
+      - name: cdylib de Godot (compila sin Godot y genera la biblioteca)
+        run: bash scripts/build-godot-cdylib.sh
 
       - name: rustfmt
         if: steps.rust.outputs.present == 'true'
