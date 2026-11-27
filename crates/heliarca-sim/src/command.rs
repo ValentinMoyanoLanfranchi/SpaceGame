@@ -54,7 +54,7 @@
 //!     fn apply(&self, _sim: &mut Sim) -> Result<(), CommandError> { Ok(()) }
 //! }
 //!
-//! let mut sim = Sim::new(Scenario::default(), 42);
+//! let mut sim = Sim::new(Scenario::default(), 42)?;
 //! sim.submit_command(Box::new(Noop))?;
 //! assert_eq!(sim.pending_command_count(), 1); // todavía no se aplicó
 //! sim.advance(Increment::S5)?;
@@ -427,7 +427,7 @@ mod tests {
     use crate::time::Increment;
 
     fn new_sim(seed: u64) -> Sim {
-        Sim::new(Scenario::default(), seed)
+        Sim::new(Scenario::default(), seed).unwrap()
     }
 
     /// Un avance mínimo: aplica los pendientes.

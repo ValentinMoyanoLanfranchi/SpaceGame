@@ -25,7 +25,7 @@
 //!
 //! let registry = CommandRegistry::builtin();
 //! let args = Payload::new().with("label", Value::Text("inicio".into()));
-//! let mut sim = Sim::new(Scenario::default(), 1);
+//! let mut sim = Sim::new(Scenario::default(), 1)?;
 //! sim.submit_command(registry.build("debug.mark", &args)?)?;
 //! sim.advance(Increment::D1)?;
 //! assert_eq!(sim.events().len(), 1);

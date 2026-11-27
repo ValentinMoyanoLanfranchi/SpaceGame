@@ -31,20 +31,20 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use heliarca_sim::{Increment, Scenario, Sim};
+use heliarca_sim::{DAYS_PER_YEAR, Increment, Scenario, Sim};
 
 /// Semilla fija: el avance no depende de ella en el escenario vacío, pero el bench es
 /// reproducible igual.
 const SEED: u64 = 1;
 
-/// Días de un año del calendario (ver el issue #439 sobre `days_per_year`).
-const DAYS_PER_YEAR: u64 = 365;
-
 /// Registra un benchmark que avanza `steps` veces con `increment`.
 fn bench_advance(c: &mut Criterion, name: &str, increment: Increment, steps: u64) {
     c.bench_function(name, |b| {
         b.iter_batched(
-            || Sim::new(Scenario::default(), black_box(SEED)),
+            || {
+                Sim::new(Scenario::default(), black_box(SEED))
+                    .expect("el escenario por defecto es válido")
+            },
             |mut sim| {
                 for _ in 0..steps {
                     let result = sim.advance(black_box(increment));

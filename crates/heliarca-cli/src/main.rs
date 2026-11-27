@@ -57,7 +57,7 @@ impl Cli {
 enum Command {
     /// Avanza la simulación N años e imprime fecha final, eventos, hash de estado y duración real.
     Run {
-        /// Cantidad de años a simular (0 a 10000; un año son 365 días).
+        /// Cantidad de años a simular (0 a 10000; el año dura `days_per_year` días, de `params.json`).
         #[arg(
             long,
             value_name = "N",
@@ -80,7 +80,7 @@ enum Command {
         /// Guardado a cargar (`.sav.zst`).
         #[arg(value_name = "ARCHIVO")]
         file: PathBuf,
-        /// Cantidad de años a continuar (0 a 10000; un año son 365 días).
+        /// Cantidad de años a continuar (0 a 10000; el año dura `days_per_year` días, de `params.json`).
         #[arg(
             long,
             value_name = "N",
@@ -140,9 +140,8 @@ impl CliError {
 
 /// Texto que imprime el ejecutable sin subcomando: versión del núcleo y fecha inicial.
 fn banner(seed: u64) -> String {
-    let sim = Sim::new(Scenario::default(), seed);
-    let date = sim
-        .date()
+    let date = Sim::new(Scenario::default(), seed)
+        .and_then(|sim| sim.date())
         .map_or_else(|error| error.to_string(), |date| date.to_string());
     format!("heliarca-cli (sim {}) - {date}", heliarca_sim::version())
 }

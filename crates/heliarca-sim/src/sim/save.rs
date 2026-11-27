@@ -42,7 +42,8 @@
 //!   cursor de eventos (observables: un `Sim` cargado debe comportarse igual que el original).
 //! - **No se guarda** el mojón de invariantes (`invariant_mark`): es contabilidad derivada; al
 //!   cargar se fija en el tiempo actual. Tampoco la copia de `Params` del planificador (se
-//!   reconstruye desde los del `Sim`) ni el `start_offset` del calendario (se deriva de `start`).
+//!   reconstruye desde los del `Sim`) ni el `start_offset` y el largo del año del calendario (se
+//!   derivan de `start` y de `params`).
 //! - **Datos estáticos de `data/`**: no se copian; se guarda su **huella** (ver abajo).
 //! - **Sistemas del planificador**: son código, no datos. Hoy ninguna API pública los registra;
 //!   si un `Sim` tiene alguno, el guardado falla con [`SaveError::SystemsNotSerializable`] en
@@ -932,7 +933,7 @@ impl Sim {
     /// ```
     /// use heliarca_sim::{Increment, Scenario, Sim};
     ///
-    /// let mut sim = Sim::new(Scenario::default(), 42);
+    /// let mut sim = Sim::new(Scenario::default(), 42)?;
     /// sim.advance(Increment::D30)?;
     /// let json = sim.to_save_json(None)?;
     /// let loaded = Sim::from_save_json(&json, None)?;
@@ -1063,20 +1064,24 @@ impl Sim {
 
         let rng = Rng::from_parts(seed, parse_hex128("rng_state", &rng_state)?)
             .ok_or_else(|| field_error("rng_state", "el estado del generador debe ser impar"))?;
-        let calendar = Calendar::new(CalendarDate {
-            year: calendar.year,
-            day: calendar.day,
-            hour: calendar.hour,
-            minute: calendar.minute,
-            second: calendar.second,
-        })
-        .map_err(|error: CalendarError| field_error("calendar", &error))?;
         let params = Params::new(
             params.days_per_week,
             params.days_per_month,
             params.days_per_year,
         )
         .map_err(|error: ParamsError| field_error("params", &error))?;
+        // La fecha de inicio tiene que existir con el largo de año guardado.
+        let calendar = Calendar::with_params(
+            CalendarDate {
+                year: calendar.year,
+                day: calendar.day,
+                hour: calendar.hour,
+                minute: calendar.minute,
+                second: calendar.second,
+            },
+            &params,
+        )
+        .map_err(|error: CalendarError| field_error("calendar", &error))?;
         let time = SimTime::from_seconds(time);
 
         let event_list = events_from_dto(events.log);
@@ -1144,7 +1149,7 @@ mod tests {
 
     #[test]
     fn un_sim_con_sistemas_no_se_guarda() {
-        let mut sim = Sim::new(Scenario::default(), 1);
+        let mut sim = Sim::new(Scenario::default(), 1).unwrap();
         sim.scheduler_mut().register(Box::new(Nada)).unwrap();
         assert_eq!(
             sim.to_save_json(None),
@@ -1173,7 +1178,7 @@ mod tests {
 
     #[test]
     fn un_comando_que_no_se_puede_reconstruir_falla_al_guardar() {
-        let mut sim = Sim::new(Scenario::default(), 1);
+        let mut sim = Sim::new(Scenario::default(), 1).unwrap();
         sim.submit_command(Box::new(Ajeno)).unwrap();
         assert!(matches!(
             sim.to_save_json(None),

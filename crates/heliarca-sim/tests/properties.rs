@@ -86,7 +86,7 @@ fn partition() -> impl Strategy<Value = Vec<Chunk>> {
 }
 
 fn run(seed: u64, chunks: &[Chunk]) -> Sim {
-    let mut sim = Sim::new(Scenario::default(), seed);
+    let mut sim = Sim::new(Scenario::default(), seed).unwrap();
     for &chunk in chunks {
         chunk.apply(&mut sim);
     }
@@ -95,7 +95,7 @@ fn run(seed: u64, chunks: &[Chunk]) -> Sim {
 
 /// Referencia: el mismo total de días, un `D1` por vez.
 fn run_daily(seed: u64, days: u64) -> Sim {
-    let mut sim = Sim::new(Scenario::default(), seed);
+    let mut sim = Sim::new(Scenario::default(), seed).unwrap();
     for _ in 0..days {
         sim.advance(Increment::D1).unwrap();
     }
@@ -112,11 +112,11 @@ proptest! {
     /// Criterio del issue: 30 × `D1` ≡ 1 × `D30`, comparando hashes de estado.
     #[test]
     fn treinta_d1_equivalen_a_un_d30(seed in any::<u64>()) {
-        let mut a = Sim::new(Scenario::default(), seed);
+        let mut a = Sim::new(Scenario::default(), seed).unwrap();
         for _ in 0..30 {
             a.advance(Increment::D1).unwrap();
         }
-        let mut b = Sim::new(Scenario::default(), seed);
+        let mut b = Sim::new(Scenario::default(), seed).unwrap();
         b.advance(Increment::D30).unwrap();
 
         // La partición es distinta (30 llamadas contra 1)...
@@ -157,7 +157,7 @@ proptest! {
     /// Misma semilla y misma secuencia: mismo hash, y en cada paso.
     #[test]
     fn misma_secuencia_mismo_hash_en_cada_paso(seed in any::<u64>(), chunks in partition()) {
-        let (mut a, mut b) = (Sim::new(Scenario::default(), seed), Sim::new(Scenario::default(), seed));
+        let (mut a, mut b) = (Sim::new(Scenario::default(), seed).unwrap(), Sim::new(Scenario::default(), seed).unwrap());
         prop_assert_eq!(a.state_hash(), b.state_hash());
         for &chunk in &chunks {
             chunk.apply(&mut a);
@@ -173,8 +173,8 @@ proptest! {
         chunks in partition(),
     ) {
         prop_assert_ne!(
-            Sim::new(Scenario::default(), seed_a).state_hash(),
-            Sim::new(Scenario::default(), seed_b).state_hash()
+            Sim::new(Scenario::default(), seed_a).unwrap().state_hash(),
+            Sim::new(Scenario::default(), seed_b).unwrap().state_hash()
         );
         prop_assert_ne!(run(seed_a, &chunks).state_hash(), run(seed_b, &chunks).state_hash());
     }

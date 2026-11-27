@@ -693,7 +693,7 @@ mod tests {
     }
 
     fn new_sim_with(scenario: Scenario, seed: u64) -> Sim {
-        let mut sim = Sim::new(scenario, seed);
+        let mut sim = Sim::new(scenario, seed).unwrap();
         noisy(&mut sim, "test.diario", Cadence::Daily);
         noisy(&mut sim, "test.semanal", Cadence::Weekly);
         noisy(&mut sim, "test.por_incremento", Cadence::EveryIncrement);
@@ -836,15 +836,15 @@ mod tests {
 
     #[test]
     fn los_params_entran_al_hash_desde_el_estado_inicial() {
-        let a = Sim::new(con_params(30), 1);
-        let b = Sim::new(con_params(30), 1);
-        let c = Sim::new(con_params(10), 1);
+        let a = Sim::new(con_params(30), 1).unwrap();
+        let b = Sim::new(con_params(30), 1).unwrap();
+        let c = Sim::new(con_params(10), 1).unwrap();
         assert_eq!(a.state_hash(), b.state_hash());
         assert_ne!(a.state_hash(), c.state_hash());
         // Los params por defecto son los del GDD.
         assert_eq!(
             a.state_hash(),
-            Sim::new(Scenario::default(), 1).state_hash()
+            Sim::new(Scenario::default(), 1).unwrap().state_hash()
         );
         // Cada parámetro cuenta.
         let p = |w, m, y| {
@@ -852,6 +852,7 @@ mod tests {
                 Scenario::new().with_params(Params::new(w, m, y).unwrap()),
                 1,
             )
+            .unwrap()
             .state_hash()
         };
         assert_ne!(p(7, 30, 365), p(6, 30, 365));
@@ -901,7 +902,7 @@ mod tests {
         let h2 = sim.state_hash();
         assert_ne!(h1, h2, "avanzar y aplicar");
 
-        let mut sim = Sim::new(Scenario::default(), 9);
+        let mut sim = Sim::new(Scenario::default(), 9).unwrap();
         let before = sim.state_hash();
         let time = sim.time();
         sim.events_mut()
@@ -915,7 +916,7 @@ mod tests {
             .unwrap();
         assert_ne!(before, sim.state_hash(), "emitir un evento");
 
-        let mut sim = Sim::new(Scenario::default(), 9);
+        let mut sim = Sim::new(Scenario::default(), 9).unwrap();
         let before = sim.state_hash();
         sim.advance(Increment::S5).unwrap();
         assert_ne!(before, sim.state_hash(), "sólo el paso y el tiempo");
@@ -924,14 +925,16 @@ mod tests {
     #[test]
     fn el_calendario_del_escenario_entra_al_hash() {
         let calendar = Calendar::new(CalendarDate::at_day_start(2, 3)).unwrap();
-        let a = Sim::new(Scenario::default(), 1).state_hash();
-        let b = Sim::new(Scenario::new().with_calendar(calendar), 1).state_hash();
+        let a = Sim::new(Scenario::default(), 1).unwrap().state_hash();
+        let b = Sim::new(Scenario::new().with_calendar(calendar), 1)
+            .unwrap()
+            .state_hash();
         assert_ne!(a, b);
     }
 
     #[test]
     fn el_estado_del_rng_entra_al_hash_aunque_no_cambie_nada_mas() {
-        let mut sim = Sim::new(Scenario::default(), 4);
+        let mut sim = Sim::new(Scenario::default(), 4).unwrap();
         let before = sim.state_hash();
         let _ = sim.rng_mut().next_u64();
         assert_ne!(before, sim.state_hash());
@@ -939,12 +942,12 @@ mod tests {
 
     #[test]
     fn los_sistemas_registrados_entran_al_hash() {
-        let plain = Sim::new(Scenario::default(), 4).state_hash();
-        let mut with_system = Sim::new(Scenario::default(), 4);
+        let plain = Sim::new(Scenario::default(), 4).unwrap().state_hash();
+        let mut with_system = Sim::new(Scenario::default(), 4).unwrap();
         noisy(&mut with_system, "test.diario", Cadence::Daily);
         assert_ne!(plain, with_system.state_hash());
         // También su cadencia.
-        let mut other = Sim::new(Scenario::default(), 4);
+        let mut other = Sim::new(Scenario::default(), 4).unwrap();
         noisy(&mut other, "test.diario", Cadence::Weekly);
         assert_ne!(with_system.state_hash(), other.state_hash());
     }
@@ -1016,7 +1019,7 @@ mod tests {
         // Sólo sistemas periódicos y sin interrupciones (`EveryIncrement` corre una vez por
         // llamada, así que depende de la partición por diseño).
         let periodic = || {
-            let mut sim = Sim::new(Scenario::default(), 6);
+            let mut sim = Sim::new(Scenario::default(), 6).unwrap();
             noisy_with(&mut sim, "test.diario", Cadence::Daily, false);
             noisy_with(&mut sim, "test.semanal", Cadence::Weekly, false);
             sim
@@ -1039,7 +1042,7 @@ mod tests {
         // `CommandRecord::step` es parte del historial de entradas: el mismo comando enviado en
         // el mismo instante pero aplicado en otra llamada es otra historia.
         let hash = |calls_before: &[Increment]| {
-            let mut sim = Sim::new(Scenario::default(), 6);
+            let mut sim = Sim::new(Scenario::default(), 6).unwrap();
             for &inc in calls_before {
                 sim.advance(inc).unwrap();
             }
@@ -1053,7 +1056,7 @@ mod tests {
 
         // `EveryIncrement` corre una vez por llamada: 1 × D5 y 5 × D1 no son equivalentes.
         let por_incremento = |calls: &[Increment]| {
-            let mut sim = Sim::new(Scenario::default(), 6);
+            let mut sim = Sim::new(Scenario::default(), 6).unwrap();
             noisy_with(
                 &mut sim,
                 "test.por_incremento",
@@ -1176,7 +1179,7 @@ mod tests {
 
     #[test]
     fn golden_hash_del_estado_inicial() {
-        let actual = Sim::new(Scenario::default(), 42).state_hash();
+        let actual = Sim::new(Scenario::default(), 42).unwrap().state_hash();
         println!("GOLDEN inicial = {:#034x}", actual.as_u128());
         assert_eq!(
             actual.as_u128(),

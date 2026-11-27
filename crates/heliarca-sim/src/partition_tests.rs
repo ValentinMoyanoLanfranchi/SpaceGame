@@ -84,7 +84,7 @@ impl System for Periodic {
 /// `Sim` con un sistema por cadencia periódica (el diario es el único que puede interrumpir,
 /// con probabilidad `1/n` por corrida si `interrupt_one_in` es `Some(n)`).
 fn sim_with_systems(seed: u64, interrupt_one_in: Option<u64>) -> (Sim, Runs) {
-    let mut sim = Sim::new(Scenario::default(), seed);
+    let mut sim = Sim::new(Scenario::default(), seed).unwrap();
     let runs = Runs::default();
     for (id, priority, cadence) in [
         ("test.diario", 1, Cadence::Daily),

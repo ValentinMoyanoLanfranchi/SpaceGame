@@ -6,9 +6,9 @@
 //!   referencias), la misma política completa que `validate-data`: una corrida sobre datos
 //!   inconsistentes no tiene sentido. Si falla, se imprimen los errores del cargador y se sale
 //!   con 1. El escenario sale de [`Scenario::from_game_data`].
-//! - **Segundos por año**: [`SECONDS_PER_YEAR`] (365 días), que es el año del calendario que
-//!   muestra [`Sim::date`] hoy; así `--years 40` termina en «Año 41, día 1, 00:00:00». Cuando
-//!   el calendario use `params.days_per_year` (issue #439) hay que cambiar [`total_seconds`].
+//! - **Segundos por año**: `days_per_year` días de los parámetros (`data/params.json`, o los del
+//!   guardado en `load`), que es el año del calendario que muestra [`Sim::date`]; así `--years 40`
+//!   termina en «Año 41, día 1, 00:00:00».
 //! - **Bucle**: se avanza con el incremento elegido y, si el resto es menor, con el mayor
 //!   incremento que entre (D30 → D5 → D1 → H1 → S5): nunca se pasa del total. Si `advance`
 //!   devuelve menos de lo pedido (interrupción) se sigue desde donde quedó, porque la CLI no
@@ -28,7 +28,7 @@ use clap::ValueEnum;
 use heliarca_sim::data::{DataLoader, GameData, ValidatedLoadError};
 use heliarca_sim::ids::EntityId;
 use heliarca_sim::{
-    CommandOutcome, CommandRegistry, Increment, SECONDS_PER_DAY, SECONDS_PER_YEAR, Scenario, Sim,
+    CommandOutcome, CommandRegistry, Increment, Params, SECONDS_PER_DAY, Scenario, Sim,
 };
 
 use crate::CliError;
@@ -82,9 +82,11 @@ impl IncrementArg {
     }
 }
 
-/// Segundos de simulación de `years` años; `None` si desborda.
-fn total_seconds(years: u32) -> Option<u64> {
-    SECONDS_PER_YEAR.checked_mul(u64::from(years))
+/// Segundos de simulación de `years` años de `params`; `None` si desborda.
+fn total_seconds(years: u32, params: &Params) -> Option<u64> {
+    SECONDS_PER_DAY
+        .checked_mul(params.days_per_year())?
+        .checked_mul(u64::from(years))
 }
 
 /// Próximo incremento: el elegido si entra en `remaining`; si no, el mayor que entre.
@@ -245,8 +247,8 @@ fn load_data(data_dir: &Path) -> Result<GameData, CliError> {
 }
 
 /// Segundos totales de `years` años, o error si desborda.
-fn checked_total(years: u32) -> Result<u64, CliError> {
-    total_seconds(years)
+fn checked_total(years: u32, params: &Params) -> Result<u64, CliError> {
+    total_seconds(years, params)
         .ok_or_else(|| CliError::Sim("el total de años desborda el tiempo de simulación".into()))
 }
 
@@ -309,7 +311,7 @@ pub fn run(options: &RunOptions<'_>, out: &mut dyn Write) -> Result<(), CliError
         save,
     } = *options;
     let data = load_data(data_dir)?;
-    let total = checked_total(years)?;
+    let total = checked_total(years, &data.params)?;
     // El script se lee, valida y construye completo ANTES de correr nada.
     let script = script
         .map(|path| {
@@ -319,7 +321,8 @@ pub fn run(options: &RunOptions<'_>, out: &mut dyn Write) -> Result<(), CliError
             Ok::<_, CliError>((path, loaded))
         })
         .transpose()?;
-    let mut sim = Sim::new(Scenario::from_game_data(&data), seed);
+    let mut sim = Sim::new(Scenario::from_game_data(&data), seed)
+        .map_err(|error| CliError::Sim(error.to_string()))?;
 
     let script_info = script
         .as_ref()
@@ -360,10 +363,10 @@ pub fn load(options: &LoadOptions<'_>, out: &mut dyn Write) -> Result<(), CliErr
         save,
     } = *options;
     let data = load_data(data_dir)?;
-    let total = checked_total(years)?;
     let mut sim = Sim::load_from_file(file, Some(&data)).map_err(|error| {
         CliError::Save(format!("no se pudo cargar {}: {error}", file.display()))
     })?;
+    let total = checked_total(years, sim.params())?;
     let origin = sim
         .date()
         .map_err(|error| CliError::Sim(error.to_string()))?;
@@ -384,9 +387,18 @@ mod tests {
 
     #[test]
     fn un_ano_son_365_dias() {
-        assert_eq!(total_seconds(1), Some(365 * 86_400));
-        assert_eq!(total_seconds(0), Some(0));
-        assert!(total_seconds(MAX_YEARS).is_some());
+        let gdd = Params::default();
+        assert_eq!(total_seconds(1, &gdd), Some(365 * 86_400));
+        assert_eq!(total_seconds(0, &gdd), Some(0));
+        assert!(total_seconds(MAX_YEARS, &gdd).is_some());
+    }
+
+    #[test]
+    fn el_ano_dura_lo_que_dicen_los_params() {
+        let params = Params::new(7, 30, 360).unwrap();
+        assert_eq!(total_seconds(2, &params), Some(720 * 86_400));
+        let largo = Params::new(7, 30, Params::MAX_DAYS_PER_YEAR).unwrap();
+        assert!(total_seconds(MAX_YEARS, &largo).is_some());
     }
 
     #[test]
@@ -404,7 +416,7 @@ mod tests {
 
     #[test]
     fn el_bucle_cubre_justo_el_total() {
-        let mut sim = Sim::new(Scenario::default(), 1);
+        let mut sim = Sim::new(Scenario::default(), 1).unwrap();
         let total = 400 * 86_400;
         advance_total(&mut sim, Increment::D30, total).unwrap();
         assert_eq!(sim.time().as_seconds(), total);

@@ -44,7 +44,9 @@ impl Scenario {
         (calendar, params)
     }
 
-    /// Reemplaza el calendario (la fecha de `SimTime = 0`).
+    /// Reemplaza el calendario (la fecha de `SimTime = 0`). De él, [`Sim::new`](crate::Sim::new)
+    /// toma sólo la fecha de inicio: el largo del año es el de [`Scenario::params`], y ahí se
+    /// valida que la fecha exista.
     #[must_use]
     pub const fn with_calendar(mut self, calendar: Calendar) -> Self {
         self.calendar = calendar;

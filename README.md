@@ -83,7 +83,7 @@ Duración real: 0,002 s (7300000 pasos/s)
 
 Opciones de `run` (además de `--seed` y `--data-dir`):
 
-- `--years <N>`: años a simular, de 0 a 10000 (por defecto `40`, el horizonte del criterio de rendimiento). Un año son 365 días, el del calendario que muestra la fecha (ver el issue #439 sobre `days_per_year`). `--years 0` es válido: 0 pasos. Fuera de rango es un error de uso (código 2).
+- `--years <N>`: años a simular, de 0 a 10000 (por defecto `40`, el horizonte del criterio de rendimiento). Un año dura `days_per_year` días (`data/params.json`, 365 por defecto; en `load`, el del guardado), el mismo del calendario que muestra la fecha. `--years 0` es válido: 0 pasos. Fuera de rango es un error de uso (código 2).
 - `--increment <s5|h1|d1|d5|d30>`: incremento de cada paso (por defecto `d1`). Si lo que falta es menos que el incremento, el último tramo se completa con incrementos menores (D30, D5, D1, H1, S5), así que nunca se pasa del total. Si el núcleo interrumpe un avance, la CLI sigue desde donde quedó; si un avance no progresa nada, corta con error (código 1) en vez de quedarse girando.
 
 Los datos se cargan con la misma política completa que `validate-data` (archivos más registro de ids y referencias); si fallan, los errores salen por stderr, uno por línea, con código 1. Las líneas de la salida son estables y parseables (`Clave: valor`); todas salvo `Duración real` son deterministas: misma semilla, años e incremento dan el mismo hash. El hash incluye el estado interno (semilla/RNG...) pero **no** el contador de pasos: la misma partida avanzada con otros incrementos (p. ej. 30×`d1` o 1×`d30`) da el mismo hash, aunque `Pasos` difiera.
@@ -143,7 +143,7 @@ Duración real: 0,003 s (121666 pasos/s)
 
 **Comandos disponibles.** Hoy sólo `debug.mark` (`label`: texto de 1 a 64 caracteres, sin caracteres de control), que deja un evento `DebugMark` en el registro. Es **infraestructura de diagnóstico y pruebas, no mecánica del juego**: existe para tener algo real que enviar y reproducir hasta que el diseño del MVP defina los comandos del juego. El catálogo de comandos conocidos es `heliarca_sim::CommandRegistry`, que construye cada comando desde su `kind` y sus argumentos (la misma pareja que guarda el historial, así que el historial se puede reinyectar).
 
-**Cuándo se aplica cada comando.** El bucle avanza la simulación hasta el día `at` y **envía** el comando (`Sim::submit_command`, que lo valida contra el estado); el comando se **aplica al comienzo del paso siguiente**, como siempre. Un `at` debe ser **menor** que los días simulados (`--years` × 365): un comando en el último instante nunca llegaría a aplicarse.
+**Cuándo se aplica cada comando.** El bucle avanza la simulación hasta el día `at` y **envía** el comando (`Sim::submit_command`, que lo valida contra el estado); el comando se **aplica al comienzo del paso siguiente**, como siempre. Un `at` debe ser **menor** que los días simulados (`--years` × `days_per_year`): un comando en el último instante nunca llegaría a aplicarse.
 
 **Reproducibilidad.** El mismo script con la misma semilla, años e incremento da el mismo hash; otra semilla, otro script (otro `at`, texto u orden) o el mismo script con otro incremento (el historial guarda en qué paso se aplicó cada comando) dan otro. Un script vacío da el mismo hash que no usar script.
 
