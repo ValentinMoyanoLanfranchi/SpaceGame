@@ -266,7 +266,7 @@ Para borrar el estado de Godot y repetir desde cero basta borrar `godot/.godot/`
 - El `heliarca.gdextension.uid` sí se versiona (recomendación oficial de Godot 4.4+).
 
 #### Otras plataformas
-El `.gdextension` ya declara las rutas de Linux (`target/debug/libheliarca_godot.so`) y macOS (`libheliarca_godot.dylib`), con `compatibility_minimum = "4.7"` y `entry_symbol = "gdext_rust_init"`. En Linux hace falta `build-essential` (ver [Requisitos](#requisitos)). El CI compila el `cdylib` en Ubuntu y Windows, pero **no abre Godot**: en Linux y macOS ni la apertura del editor ni el recargado en caliente están probados.
+El `.gdextension` ya declara las rutas de Linux (`target/debug/libheliarca_godot.so`) y macOS (`libheliarca_godot.dylib`), con `compatibility_minimum = "4.7"` y `entry_symbol = "gdext_rust_init"`. En Linux hace falta `build-essential` (ver [Requisitos](#requisitos)). El CI compila el `cdylib` en Ubuntu y Windows con [`scripts/build-godot-cdylib.sh`](scripts/build-godot-cdylib.sh) (también se puede correr en local; falla si no compila o no genera la biblioteca que declara el `.gdextension`), pero **no abre Godot**: en Linux y macOS ni la apertura del editor ni el recargado en caliente están probados.
 
 #### La escena `Main`
 `Main.tscn` tiene una `Label` y el script [`godot/Main.gd`](godot/Main.gd): en `_ready` crea un `SimHandle` (clase gdext de `heliarca-godot`, base `RefCounted`, que posee un `Sim`), llama a `hello()` y muestra el texto en la etiqueta y en la consola. El texto lo arma `heliarca-sim` (versión del núcleo y fecha inicial), por ejemplo `Heliarca (sim 0.1.0): Año 1, día 1, 00:00:00`. `SimHandle` no tiene lógica de juego: sólo posee el `Sim` y envuelve su API pública (`set_seed(semilla)` lo reinicia con otra semilla).
