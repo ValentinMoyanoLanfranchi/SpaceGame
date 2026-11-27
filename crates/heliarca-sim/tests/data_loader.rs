@@ -337,6 +337,7 @@ fn params_json_con_valores_propios_se_carga() {
     let scenario = heliarca_sim::Scenario::from_game_data(&data);
     assert_eq!(
         heliarca_sim::Sim::new(scenario, 1)
+            .unwrap()
             .params()
             .days_per_month(),
         10

@@ -72,7 +72,7 @@ pub enum AdvanceError {
 /// ```
 /// use heliarca_sim::{Increment, Scenario, Sim};
 ///
-/// let mut sim = Sim::new(Scenario::default(), 1);
+/// let mut sim = Sim::new(Scenario::default(), 1)?;
 /// let result = sim.advance(Increment::D30)?;
 /// // Sin sistemas que emitan interrupciones, se avanza el incremento completo.
 /// assert!(result.completed());
@@ -129,7 +129,7 @@ impl AdvanceResult {
 /// }
 ///
 /// // 1. Crear: escenario y semilla determinan el inicio por completo.
-/// let mut sim = Sim::new(Scenario::default(), 42);
+/// let mut sim = Sim::new(Scenario::default(), 42)?;
 /// assert_eq!(sim.time(), SimTime::ZERO);
 /// assert_eq!(sim.seed(), 42);
 /// assert_eq!(sim.date()?.to_string(), "Año 1, día 1, 00:00:00");
@@ -258,10 +258,20 @@ impl Sim {
     /// Crea una simulación a partir de un escenario y una semilla, en [`SimTime::ZERO`].
     ///
     /// El mismo escenario con la misma semilla produce siempre la misma simulación.
-    #[must_use]
-    pub fn new(scenario: Scenario, seed: u64) -> Self {
+    ///
+    /// Del calendario del escenario se toma la **fecha de inicio**; el largo del año es siempre el
+    /// de los parámetros del escenario ([`Params::days_per_year`]), sin importar en qué orden se
+    /// llamó a [`Scenario::with_calendar`] y [`Scenario::with_params`].
+    ///
+    /// # Errors
+    ///
+    /// [`CalendarError::InvalidDate`] si la fecha de inicio no existe con esos parámetros (por
+    /// ejemplo, el día 363 con años de 360 días); [`CalendarError::Overflow`] si su
+    /// desplazamiento no cabe en `u64` segundos.
+    pub fn new(scenario: Scenario, seed: u64) -> Result<Self, CalendarError> {
         let (calendar, params) = scenario.into_parts();
-        Self {
+        let calendar = Calendar::with_params(calendar.start(), &params)?;
+        Ok(Self {
             rng: Rng::from_seed(seed),
             calendar,
             params,
@@ -270,7 +280,7 @@ impl Sim {
             commands: CommandQueue::default(),
             steps: 0,
             invariant_mark: Mark::default(),
-        }
+        })
     }
 
     /// Comprueba los invariantes del estado (doc 21 §2 y §4) y devuelve la **primera**
@@ -291,7 +301,7 @@ impl Sim {
     /// ```
     /// use heliarca_sim::{Increment, Scenario, Sim};
     ///
-    /// let mut sim = Sim::new(Scenario::default(), 42);
+    /// let mut sim = Sim::new(Scenario::default(), 42)?;
     /// sim.advance(Increment::D30)?;
     /// assert!(sim.check_invariants().is_ok());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -339,7 +349,7 @@ impl Sim {
     /// use heliarca_sim::{Increment, Scenario, Sim};
     ///
     /// let run = |seed| -> Result<_, Box<dyn std::error::Error>> {
-    ///     let mut sim = Sim::new(Scenario::default(), seed);
+    ///     let mut sim = Sim::new(Scenario::default(), seed)?;
     ///     sim.advance(Increment::D5)?;
     ///     sim.advance(Increment::H1)?;
     ///     Ok(sim)
@@ -390,7 +400,8 @@ impl Sim {
         self.scheduler.time()
     }
 
-    /// Calendario del escenario.
+    /// Calendario de la partida: la fecha de inicio del escenario con años de
+    /// [`Params::days_per_year`] días.
     #[must_use]
     pub const fn calendar(&self) -> Calendar {
         self.calendar
@@ -658,7 +669,7 @@ mod tests {
     use crate::ids::EntityId;
 
     fn sim(seed: u64) -> Sim {
-        Sim::new(Scenario::default(), seed)
+        Sim::new(Scenario::default(), seed).unwrap()
     }
 
     /// Comando de prueba: emite un evento con `n`.
@@ -750,7 +761,7 @@ mod tests {
     #[test]
     fn crear_con_escenario_y_semilla() {
         let calendar = Calendar::new(CalendarDate::at_day_start(7, 200)).unwrap();
-        let sim = Sim::new(Scenario::new().with_calendar(calendar), 1234);
+        let sim = Sim::new(Scenario::new().with_calendar(calendar), 1234).unwrap();
         assert_eq!(sim.seed(), 1234);
         assert_eq!(sim.time(), SimTime::ZERO);
         assert_eq!(sim.steps(), 0);
@@ -1309,7 +1320,7 @@ mod tests {
         std::fs::write(dir.join("params.json"), params_json).unwrap();
         let data = DataLoader::load_dir(&dir).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        Sim::new(Scenario::from_game_data(&data), 1)
+        Sim::new(Scenario::from_game_data(&data), 1).unwrap()
     }
 
     fn corridas_mensuales(params_json: &str, caso: &str, dias: u64) -> usize {
@@ -1347,6 +1358,78 @@ mod tests {
         assert_eq!(count(&sem, "sem"), 20);
         assert_eq!(count(&anio, "anio"), 2);
         assert_eq!(sim.params().days_per_year(), 20);
+    }
+
+    // ---- Largo del año del calendario (#439) ----
+
+    fn params_360() -> Params {
+        Params::new(7, 30, 360).unwrap()
+    }
+
+    #[test]
+    fn la_cadencia_anual_coincide_con_el_cambio_de_anio_del_calendario() {
+        for increment in [Increment::D1, Increment::D30] {
+            let mut sim = Sim::new(Scenario::new().with_params(params_360()), 1).unwrap();
+            let runs = add(&mut sim, "anio", 0, Cadence::Yearly, &[]);
+            while sim.time() < SimTime::from_days(3 * 360).unwrap() {
+                sim.advance(increment).unwrap();
+                // En todo momento: corridas anuales == años de calendario cambiados.
+                let cambios = sim.date().unwrap().year - 1;
+                assert_eq!(count(&runs, "anio") as u64, cambios, "{increment:?}");
+            }
+            assert_eq!(count(&runs, "anio"), 3);
+        }
+    }
+
+    #[test]
+    fn con_anios_de_360_dias_el_dia_361_es_anio_2_dia_1() {
+        let mut sim = Sim::new(Scenario::new().with_params(params_360()), 1).unwrap();
+        let runs = add(&mut sim, "anio", 0, Cadence::Yearly, &[]);
+        for _ in 0..359 {
+            sim.advance(Increment::D1).unwrap();
+        }
+        assert_eq!(sim.date().unwrap(), CalendarDate::at_day_start(1, 360));
+        assert_eq!(count(&runs, "anio"), 0);
+        sim.advance(Increment::D1).unwrap();
+        assert_eq!(sim.date().unwrap(), CalendarDate::at_day_start(2, 1));
+        assert_eq!(count(&runs, "anio"), 1);
+        assert_eq!(sim.calendar().days_per_year(), 360);
+    }
+
+    #[test]
+    fn una_fecha_de_inicio_inexistente_se_rechaza() {
+        let calendar = Calendar::new(CalendarDate::at_day_start(1, 363)).unwrap();
+        // El orden de `with_*` no importa: se valida el par final.
+        for scenario in [
+            Scenario::new()
+                .with_calendar(calendar)
+                .with_params(params_360()),
+            Scenario::new()
+                .with_params(params_360())
+                .with_calendar(calendar),
+        ] {
+            assert_eq!(
+                Sim::new(scenario, 1).unwrap_err(),
+                CalendarError::InvalidDate
+            );
+        }
+    }
+
+    #[test]
+    fn un_anio_largo_admite_dias_posteriores_al_365() {
+        let params = Params::new(7, 30, 400).unwrap();
+        let start = CalendarDate::at_day_start(1, 380);
+        let calendar = Calendar::with_params(start, &params).unwrap();
+        let scenario = Scenario::new().with_calendar(calendar).with_params(params);
+        let mut sim = Sim::new(scenario, 1).unwrap();
+        assert_eq!(sim.date().unwrap(), start);
+        sim.advance(Increment::D30).unwrap();
+        assert_eq!(sim.date().unwrap(), CalendarDate::at_day_start(2, 10));
+        // El mismo calendario con los parámetros por defecto no tiene día 380.
+        assert_eq!(
+            Sim::new(Scenario::new().with_calendar(calendar), 1).unwrap_err(),
+            CalendarError::InvalidDate
+        );
     }
 
     #[test]

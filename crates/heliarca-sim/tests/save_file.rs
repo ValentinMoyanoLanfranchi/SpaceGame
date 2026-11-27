@@ -37,7 +37,7 @@ fn mark(sim: &mut Sim, label: &str) {
 
 /// 365 días en pasos de distinto tamaño, con un comando `debug.mark` cada tres pasos.
 fn year_with_marks(seed: u64) -> Sim {
-    let mut sim = Sim::new(Scenario::default(), seed);
+    let mut sim = Sim::new(Scenario::default(), seed).unwrap();
     let plan = [
         Increment::D30,
         Increment::D5,
@@ -100,7 +100,7 @@ fn ida_y_vuelta_por_archivo_conserva_el_hash_y_pesa_menos_que_el_json() {
 fn tamanos_de_un_anio_con_un_comando_por_dia() {
     let dir = dir("tamanos");
     let path = dir.join("a.sav.zst");
-    let mut sim = Sim::new(Scenario::default(), 11);
+    let mut sim = Sim::new(Scenario::default(), 11).unwrap();
     for day in 0..365 {
         mark(&mut sim, &format!("dia {day}"));
         sim.advance(Increment::D1).unwrap();
@@ -133,7 +133,7 @@ fn mismos_bytes_para_el_mismo_guardado() {
 fn sobrescribir_un_guardado_existente() {
     let dir = dir("sobrescribir");
     let path = dir.join("a.sav.zst");
-    let mut sim = Sim::new(Scenario::default(), 1);
+    let mut sim = Sim::new(Scenario::default(), 1).unwrap();
     sim.save_to_file(&path, None).unwrap();
     let first = Sim::load_from_file(&path, None).unwrap().state_hash();
     sim.advance(Increment::D30).unwrap();
@@ -149,6 +149,7 @@ fn guardar_en_directorio_inexistente_es_error() {
     let dir = dir("sin_dir");
     let path = dir.join("no_existe").join("a.sav.zst");
     let err = Sim::new(Scenario::default(), 1)
+        .unwrap()
         .save_to_file(&path, None)
         .unwrap_err();
     assert!(matches!(err, SaveFileError::Io { .. }), "{err}");
@@ -161,6 +162,7 @@ fn guardar_sobre_un_directorio_es_error_y_no_deja_temporales() {
     let target = dir.join("a.sav.zst");
     fs::create_dir(&target).unwrap();
     let err = Sim::new(Scenario::default(), 1)
+        .unwrap()
         .save_to_file(&target, None)
         .unwrap_err();
     assert!(matches!(err, SaveFileError::Io { .. }), "{err}");
@@ -171,6 +173,7 @@ fn guardar_sobre_un_directorio_es_error_y_no_deja_temporales() {
 #[test]
 fn ruta_sin_nombre_de_archivo_es_error() {
     let err = Sim::new(Scenario::default(), 1)
+        .unwrap()
         .save_to_file("", None)
         .unwrap_err();
     assert!(matches!(err, SaveFileError::InvalidPath(_)), "{err}");
@@ -237,6 +240,7 @@ fn datos_de_mas_tras_el_frame_es_error() {
     let dir = dir("sobrantes");
     let path = dir.join("a.sav.zst");
     Sim::new(Scenario::default(), 1)
+        .unwrap()
         .save_to_file(&path, None)
         .unwrap();
     let mut bytes = fs::read(&path).unwrap();

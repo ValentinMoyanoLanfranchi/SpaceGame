@@ -1193,3 +1193,34 @@ fn load_y_save_con_argumentos_invalidos_salen_con_2() {
     let output = cli(&["load", s(&file), "--seed", "1"]);
     assert!(text(&output.stderr).contains("la semilla viene del guardado"));
 }
+
+#[test]
+fn run_y_load_usan_el_largo_del_anio_de_los_datos() {
+    let data = fixture("anio-360");
+    write(
+        &data,
+        "params.json",
+        r#"{"days_per_week": 7, "days_per_month": 30, "days_per_year": 360}"#,
+    );
+    let file = save_dir("anio-360").join("a.sav.zst");
+    let out = ok(&cli(&[
+        "run",
+        "--years",
+        "1",
+        "--data-dir",
+        s(&data),
+        "--save",
+        s(&file),
+    ]));
+    assert_eq!(field(&out, "Pasos"), "360");
+    assert_eq!(field(&out, "Fecha final"), "Año 2, día 1, 00:00:00");
+    let out = ok(&cli(&[
+        "load",
+        s(&file),
+        "--years",
+        "1",
+        "--data-dir",
+        s(&data),
+    ]));
+    assert_eq!(field(&out, "Fecha final"), "Año 3, día 1, 00:00:00");
+}

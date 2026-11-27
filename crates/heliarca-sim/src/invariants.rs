@@ -223,7 +223,7 @@ mod tests {
     use crate::time::Increment;
 
     fn sim() -> Sim {
-        Sim::new(Scenario::default(), 7)
+        Sim::new(Scenario::default(), 7).unwrap()
     }
 
     #[derive(Debug)]
@@ -705,7 +705,7 @@ mod tests {
             seed in any::<u64>(),
             ops in proptest::collection::vec(op(), 0..40),
         ) {
-            let mut sim = Sim::new(Scenario::default(), seed);
+            let mut sim = Sim::new(Scenario::default(), seed).unwrap();
             with_systems(&mut sim);
             for op in ops {
                 match op {

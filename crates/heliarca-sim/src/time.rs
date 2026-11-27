@@ -2,13 +2,17 @@
 //!
 //! El tiempo es un contador entero de segundos ([`SimTime`]); nunca se consulta el reloj
 //! del sistema (`std::time` está prohibido por `clippy.toml`), de modo que la simulación
-//! es determinista. El calendario es de año fijo de 365 días, sin bisiestos ni meses.
+//! es determinista. El calendario es de año fijo, sin bisiestos ni meses: su largo es
+//! [`Params::days_per_year`] (365 por defecto, [`DAYS_PER_YEAR`]). Quedan como constantes sólo las
+//! identidades de unidad (segundos por minuto, hora y día).
 //!
 //! Convenciones: los años y los días se numeran desde 1 («Año 1, día 1»); la hora, el
 //! minuto y el segundo, desde 0. Toda la aritmética es explícita sobre desbordes: devuelve
 //! `Option`/`Result` o satura (métodos `saturating_*`), y nunca entra en pánico.
 
 use std::fmt;
+
+use crate::params::Params;
 
 /// Segundos por minuto.
 pub const SECONDS_PER_MINUTE: u64 = 60;
@@ -20,10 +24,9 @@ pub const SECONDS_PER_HOUR: u64 = SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
 pub const HOURS_PER_DAY: u64 = 24;
 /// Segundos por día.
 pub const SECONDS_PER_DAY: u64 = SECONDS_PER_HOUR * HOURS_PER_DAY;
-/// Días por año (calendario simple: año fijo de 365 días, doc 22 §0).
+/// Días por año del GDD (doc 22 §0): **sólo** el valor por defecto de `days_per_year`
+/// ([`Params`]). El largo del año de una partida es [`Params::days_per_year`].
 pub const DAYS_PER_YEAR: u64 = 365;
-/// Segundos por año.
-pub const SECONDS_PER_YEAR: u64 = SECONDS_PER_DAY * DAYS_PER_YEAR;
 
 /// Primer año del calendario.
 pub const FIRST_YEAR: u64 = 1;
@@ -132,7 +135,7 @@ impl Increment {
 pub struct CalendarDate {
     /// Año, desde 1.
     pub year: u64,
-    /// Día del año, en `1..=365`.
+    /// Día del año, desde 1 hasta el largo del año ([`Calendar::days_per_year`]).
     pub day: u16,
     /// Hora, en `0..24`.
     pub hour: u8,
@@ -152,7 +155,7 @@ impl CalendarDate {
         second: 0,
     };
 
-    /// Fecha a medianoche del día indicado (sin validar; ver [`Calendar::new`]).
+    /// Fecha a medianoche del día indicado (sin validar; ver [`Calendar::with_params`]).
     #[must_use]
     pub const fn at_day_start(year: u64, day: u16) -> Self {
         Self {
@@ -178,7 +181,7 @@ impl fmt::Display for CalendarDate {
 /// Errores de calendario.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarError {
-    /// La fecha no existe en el calendario (año 0, día fuera de 1..=365, hora fuera de rango...).
+    /// La fecha no existe en el calendario (año 0, día fuera del año, hora fuera de rango...).
     InvalidDate,
     /// La fecha es anterior al inicio de la simulación.
     BeforeStart,
@@ -198,12 +201,30 @@ impl fmt::Display for CalendarError {
 
 impl std::error::Error for CalendarError {}
 
-/// Calendario simple: asocia `SimTime = 0` con una fecha de inicio configurable.
+/// Calendario simple: asocia `SimTime = 0` con una fecha de inicio configurable, con años de
+/// [`Calendar::days_per_year`] días.
+///
+/// El largo del año de una partida sale siempre de sus [`Params`]:
+/// [`Sim::new`](crate::Sim::new) toma del calendario del escenario **sólo la fecha de inicio**,
+/// la valida contra `days_per_year` y rechaza la que no exista.
+///
+/// # Ejemplo
+///
+/// ```
+/// use heliarca_sim::{Calendar, CalendarDate, Params, SimTime};
+///
+/// let calendario = Calendar::with_params(CalendarDate::ORIGIN, &Params::new(7, 30, 360)?)?;
+/// let fecha = calendario.date_at(SimTime::from_days(360).ok_or("desborde")?)?;
+/// assert_eq!(fecha, CalendarDate::at_day_start(2, 1));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Calendar {
     start: CalendarDate,
     /// Segundos desde «Año 1, día 1, 00:00:00» hasta `start` (precalculado).
     start_offset: u64,
+    /// Largo del año; siempre en `1..=Params::MAX_DAYS_PER_YEAR` (viene de un [`Params`]).
+    days_per_year: u64,
 }
 
 impl Default for Calendar {
@@ -211,32 +232,54 @@ impl Default for Calendar {
         Self {
             start: CalendarDate::ORIGIN,
             start_offset: 0,
+            days_per_year: DAYS_PER_YEAR,
         }
     }
 }
 
 impl Calendar {
     /// Fecha de inicio para el hash de estado. Desestructura **sin `..`**: un campo nuevo obliga
-    /// a decidir si se hashea. `start_offset` se excluye a propósito: se deriva de `start`.
+    /// a decidir si se hashea. Se excluyen a propósito `start_offset` (se deriva de `start` y del
+    /// largo del año) y `days_per_year` (copia de los `Params` del `Sim`, que se hashean aparte).
     pub(crate) const fn hash_parts(&self) -> CalendarDate {
         let Self {
             start,
             start_offset: _derivado_de_start,
+            days_per_year: _copia_de_los_params_del_sim,
         } = *self;
         start
     }
 
-    /// Crea un calendario cuyo `SimTime = 0` corresponde a `start`.
+    /// Crea un calendario con el año por defecto ([`Params::DEFAULT`], 365 días) cuyo
+    /// `SimTime = 0` corresponde a `start`. Para otro largo de año usar
+    /// [`Calendar::with_params`].
     ///
     /// # Errors
-    /// [`CalendarError::InvalidDate`] si `start` no es una fecha válida;
-    /// [`CalendarError::Overflow`] si su desplazamiento no cabe en `u64`.
+    /// Los de [`Calendar::with_params`].
     pub fn new(start: CalendarDate) -> Result<Self, CalendarError> {
-        let start_offset = absolute_seconds(start)?;
+        Self::with_params(start, &Params::DEFAULT)
+    }
+
+    /// Crea un calendario con años de [`Params::days_per_year`] días cuyo `SimTime = 0`
+    /// corresponde a `start`.
+    ///
+    /// # Errors
+    /// [`CalendarError::InvalidDate`] si `start` no existe en ese calendario;
+    /// [`CalendarError::Overflow`] si su desplazamiento no cabe en `u64`.
+    pub fn with_params(start: CalendarDate, params: &Params) -> Result<Self, CalendarError> {
+        let days_per_year = params.days_per_year();
+        let start_offset = absolute_seconds(start, days_per_year)?;
         Ok(Self {
             start,
             start_offset,
+            days_per_year,
         })
+    }
+
+    /// Días por año de este calendario.
+    #[must_use]
+    pub const fn days_per_year(&self) -> u64 {
+        self.days_per_year
     }
 
     /// Fecha de inicio (la de `SimTime = 0`).
@@ -254,7 +297,7 @@ impl Calendar {
             .start_offset
             .checked_add(time.as_seconds())
             .ok_or(CalendarError::Overflow)?;
-        Ok(date_from_absolute(abs))
+        Ok(date_from_absolute(abs, self.days_per_year))
     }
 
     /// Instante correspondiente a una fecha (inversa de [`Calendar::date_at`]).
@@ -264,7 +307,7 @@ impl Calendar {
     /// [`CalendarError::BeforeStart`] si es anterior al inicio;
     /// [`CalendarError::Overflow`] si no cabe en `u64`.
     pub fn time_of(&self, date: CalendarDate) -> Result<SimTime, CalendarError> {
-        let abs = absolute_seconds(date)?;
+        let abs = absolute_seconds(date, self.days_per_year)?;
         abs.checked_sub(self.start_offset)
             .map(SimTime::from_seconds)
             .ok_or(CalendarError::BeforeStart)
@@ -272,10 +315,10 @@ impl Calendar {
 }
 
 /// Segundos desde «Año 1, día 1, 00:00:00» hasta `date`.
-fn absolute_seconds(date: CalendarDate) -> Result<u64, CalendarError> {
+fn absolute_seconds(date: CalendarDate, days_per_year: u64) -> Result<u64, CalendarError> {
     let day = u64::from(date.day);
     if date.year < FIRST_YEAR
-        || !(FIRST_DAY..=DAYS_PER_YEAR).contains(&day)
+        || !(FIRST_DAY..=days_per_year).contains(&day)
         || u64::from(date.hour) >= HOURS_PER_DAY
         || u64::from(date.minute) >= MINUTES_PER_HOUR
         || u64::from(date.second) >= SECONDS_PER_MINUTE
@@ -283,7 +326,7 @@ fn absolute_seconds(date: CalendarDate) -> Result<u64, CalendarError> {
         return Err(CalendarError::InvalidDate);
     }
     let days = (date.year - FIRST_YEAR)
-        .checked_mul(DAYS_PER_YEAR)
+        .checked_mul(days_per_year)
         .and_then(|d| d.checked_add(day - FIRST_DAY))
         .ok_or(CalendarError::Overflow)?;
     days.checked_mul(SECONDS_PER_DAY)
@@ -298,14 +341,15 @@ fn absolute_seconds(date: CalendarDate) -> Result<u64, CalendarError> {
 }
 
 /// Fecha para un total de segundos desde «Año 1, día 1, 00:00:00». Total: no puede fallar,
-/// porque `u64::MAX` segundos son ~5,8e11 años, que caben en `u64`.
+/// porque `u64::MAX` segundos son ~2,1e14 días, que caben en `u64` aun con años de un día.
+/// `days_per_year` debe estar en `1..=Params::MAX_DAYS_PER_YEAR` (lo garantiza [`Params`]).
 #[allow(clippy::cast_possible_truncation)] // Cada resto es menor que el tope de su tipo destino.
-fn date_from_absolute(abs: u64) -> CalendarDate {
+fn date_from_absolute(abs: u64, days_per_year: u64) -> CalendarDate {
     let total_days = abs / SECONDS_PER_DAY;
     let in_day = abs % SECONDS_PER_DAY;
     CalendarDate {
-        year: FIRST_YEAR + total_days / DAYS_PER_YEAR,
-        day: (FIRST_DAY + total_days % DAYS_PER_YEAR) as u16,
+        year: FIRST_YEAR + total_days / days_per_year,
+        day: (FIRST_DAY + total_days % days_per_year) as u16,
         hour: (in_day / SECONDS_PER_HOUR) as u8,
         minute: (in_day % SECONDS_PER_HOUR / SECONDS_PER_MINUTE) as u8,
         second: (in_day % SECONDS_PER_MINUTE) as u8,
@@ -315,6 +359,14 @@ fn date_from_absolute(abs: u64) -> CalendarDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Segundos del año por defecto (el valor del GDD).
+    const SECONDS_PER_YEAR: u64 = SECONDS_PER_DAY * DAYS_PER_YEAR;
+
+    fn cal_con(days_per_year: u64) -> Calendar {
+        let params = Params::new(1, 1, days_per_year).unwrap();
+        Calendar::with_params(CalendarDate::ORIGIN, &params).unwrap()
+    }
 
     fn cal() -> Calendar {
         Calendar::default()
@@ -491,5 +543,57 @@ mod tests {
         let t = SimTime::MAX.saturating_add_seconds(0);
         let c0 = cal();
         assert_eq!(c0.time_of(c0.date_at(t).unwrap()), Ok(t));
+    }
+
+    #[test]
+    fn con_anios_de_360_dias_el_dia_361_es_anio_2_dia_1() {
+        let c = cal_con(360);
+        assert_eq!(c.days_per_year(), 360);
+        // El día 361 de la partida empieza tras 360 días completos.
+        let t = SimTime::from_days(360).unwrap();
+        assert_eq!(c.date_at(t).unwrap(), CalendarDate::at_day_start(2, 1));
+        let antes = SimTime::from_seconds(t.as_seconds() - 1);
+        assert_eq!(c.date_at(antes).unwrap(), d(1, 360, 23, 59, 59));
+        assert_eq!(c.time_of(CalendarDate::at_day_start(2, 1)), Ok(t));
+        assert_eq!(
+            c.time_of(CalendarDate::at_day_start(1, 361)),
+            Err(CalendarError::InvalidDate)
+        );
+    }
+
+    #[test]
+    fn la_fecha_de_inicio_se_valida_contra_el_largo_del_anio() {
+        let corto = Params::new(7, 30, 360).unwrap();
+        let largo = Params::new(7, 30, 400).unwrap();
+        let dia = |n| CalendarDate::at_day_start(1, n);
+        assert!(Calendar::with_params(dia(360), &corto).is_ok());
+        assert_eq!(
+            Calendar::with_params(dia(361), &corto),
+            Err(CalendarError::InvalidDate)
+        );
+        assert!(Calendar::with_params(dia(380), &largo).is_ok());
+        assert_eq!(Calendar::new(dia(380)), Err(CalendarError::InvalidDate));
+    }
+
+    #[test]
+    fn ida_y_vuelta_con_otros_largos_de_anio() {
+        for days_per_year in [1, 27, 360, 400, Params::MAX_DAYS_PER_YEAR] {
+            let c = cal_con(days_per_year);
+            for t in [
+                SimTime::ZERO,
+                SimTime::from_days(days_per_year - 1).unwrap(),
+                SimTime::from_days(days_per_year).unwrap(),
+                SimTime::from_seconds(987_654_321),
+                SimTime::MAX,
+            ] {
+                let date = c.date_at(t).unwrap();
+                assert!((1..=days_per_year).contains(&u64::from(date.day)));
+                assert_eq!(c.time_of(date), Ok(t), "{days_per_year} días");
+            }
+        }
+        // El último día del año más largo cabe en `CalendarDate::day`.
+        let c = cal_con(Params::MAX_DAYS_PER_YEAR);
+        let ultimo = SimTime::from_days(Params::MAX_DAYS_PER_YEAR - 1).unwrap();
+        assert_eq!(c.date_at(ultimo).unwrap().day, u16::MAX);
     }
 }

@@ -33,21 +33,24 @@
 //!
 //! # Validación
 //!
-//! - cada parámetro de días es un entero entre 1 y [`Params::MAX_DAYS`];
+//! - cada parámetro de días es un entero entre 1 y [`Params::MAX_DAYS`], salvo `days_per_year`,
+//!   cuyo tope es [`Params::MAX_DAYS_PER_YEAR`] (el día del año es un `u16`,
+//!   [`CalendarDate::day`](crate::CalendarDate::day)); por el orden de abajo, ese tope acota
+//!   también a la semana y al mes;
 //! - `days_per_week <= days_per_month <= days_per_year` (una semana más larga que un mes, o un mes
 //!   más largo que un año, no tiene sentido). El mes **no** tiene que dividir al año (doc 22 §0:
 //!   12 meses = 360 días).
 //!
-//! # Inmutabilidad y alcance actual
+//! # Inmutabilidad y alcance
 //!
 //! [`Params`] no tiene setters ni campos públicos: se construye ya validado ([`Params::new`], la
 //! carga de datos o [`Params::default`]) y [`Sim`](crate::Sim) lo guarda sin exponer mutación.
 //!
-//! Hoy los parámetros gobiernan las **cadencias del planificador** (semanal, mensual y anual).
-//! **Pendiente:** el [`Calendar`](crate::Calendar) y `SECONDS_PER_YEAR` siguen usando la constante
-//! `DAYS_PER_YEAR` (365) para convertir segundos a año/día; migrarlos toca la API pública del
-//! tiempo (`SimTime`, `Calendar`, `Increment`) y queda para una tarea aparte. Hasta entonces,
-//! cambiar `days_per_year` mueve la cadencia anual pero no la fecha de calendario.
+//! Los parámetros gobiernan las **cadencias del planificador** (semanal, mensual y anual) y el
+//! largo del año del [`Calendar`](crate::Calendar): la cadencia anual y el calendario usan el mismo
+//! `days_per_year`. Las cadencias cuentan desde el inicio de la partida y el calendario desde su
+//! fecha de inicio, así que la cadencia anual coincide con el cambio de año cuando la partida
+//! empieza en el día 1 a las 00:00:00 (la fecha por defecto).
 
 use std::fmt;
 
@@ -62,8 +65,8 @@ const FIELDS: [&str; 3] = ["days_per_week", "days_per_month", "days_per_year"];
 
 /// Esquema JSON de `params.json` (ver `crate::schema`). `Params` se parsea a mano (para dar
 /// mensajes en español), así que su esquema se arma a mano, pero **desde los mismos datos que el
-/// cargador**: la lista de campos (`FIELDS`: obligatorios, sin campos desconocidos) y
-/// [`Params::MAX_DAYS`]. Agregar un parámetro a `FIELDS` lo agrega al esquema.
+/// cargador**: la lista de campos (`FIELDS`: obligatorios, sin campos desconocidos) y el tope de
+/// cada uno (`max_days`). Agregar un parámetro a `FIELDS` lo agrega al esquema.
 ///
 /// No expresa `days_per_week <= days_per_month <= days_per_year`: es validación semántica del
 /// cargador (JSON Schema no compara campos entre sí). Tampoco coincide con el cargador en `7.0`
@@ -71,13 +74,14 @@ const FIELDS: [&str; 3] = ["days_per_week", "days_per_month", "days_per_year"];
 pub(crate) fn json_schema() -> Schema {
     let mut properties = serde_json::Map::new();
     for field in FIELDS {
+        let max = max_days(field);
         properties.insert(
             field.to_owned(),
             json!({
-                "description": format!("Parámetro de días `{field}` (entero entre 1 y {}).", Params::MAX_DAYS),
+                "description": format!("Parámetro de días `{field}` (entero entre 1 y {max})."),
                 "type": "integer",
                 "minimum": 1,
-                "maximum": Params::MAX_DAYS,
+                "maximum": max,
             }),
         );
     }
@@ -90,6 +94,15 @@ pub(crate) fn json_schema() -> Schema {
         "required": FIELDS,
         "additionalProperties": false,
     })
+}
+
+/// Tope de un parámetro de días de `FIELDS`.
+fn max_days(field: &str) -> u64 {
+    if field == "days_per_year" {
+        Params::MAX_DAYS_PER_YEAR
+    } else {
+        Params::MAX_DAYS
+    }
 }
 
 /// Un parámetro inválido: su nombre y qué le pasa. `Display`: `days_per_month: debe ser >= 1`.
@@ -136,10 +149,10 @@ impl std::error::Error for ParamsError {}
 /// use heliarca_sim::{Params, Scenario, Sim};
 ///
 /// let params = Params::new(7, 10, 365)?; // meses de 10 días
-/// let sim = Sim::new(Scenario::new().with_params(params), 1);
+/// let sim = Sim::new(Scenario::new().with_params(params), 1)?;
 /// assert_eq!(sim.params().days_per_month(), 10);
 /// assert!(Params::new(7, 0, 365).is_err()); // 0 días por mes: inválido
-/// # Ok::<(), heliarca_sim::ParamsError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 // Los nombres de los campos son los de `params.json`, con el prefijo común a propósito.
 #[allow(clippy::struct_field_names)]
@@ -151,8 +164,13 @@ pub struct Params {
 }
 
 impl Params {
-    /// Máximo de días de un período (evita desbordes al pasar a segundos).
+    /// Máximo de días de un período (evita desbordes al pasar a segundos). El año tiene un tope
+    /// propio, [`Params::MAX_DAYS_PER_YEAR`].
     pub const MAX_DAYS: u64 = 1_000_000;
+
+    /// Máximo de `days_per_year`: `u16::MAX`, porque el día del año
+    /// ([`CalendarDate::day`](crate::CalendarDate::day)) es un `u16`.
+    pub const MAX_DAYS_PER_YEAR: u64 = u16::MAX as u64;
 
     /// Los valores del GDD (doc 22 §0): semana 7, mes 30, año 365 días.
     pub const DEFAULT: Self = Self {
@@ -196,7 +214,7 @@ impl Params {
         self.days_per_month
     }
 
-    /// Días por año (cadencia anual).
+    /// Días por año (cadencia anual y largo del año del calendario).
     #[must_use]
     pub const fn days_per_year(&self) -> u64 {
         self.days_per_year
@@ -278,13 +296,11 @@ impl Default for Params {
 fn validate(week: u64, month: u64, year: u64) -> Vec<ParamsError> {
     let mut errors = Vec::new();
     for (field, days) in FIELDS.into_iter().zip([week, month, year]) {
-        if !(1..=Params::MAX_DAYS).contains(&days) {
+        let max = max_days(field);
+        if !(1..=max).contains(&days) {
             errors.push(ParamsError::new(
                 field,
-                format!(
-                    "fuera de rango: {days} (debe estar entre 1 y {})",
-                    Params::MAX_DAYS
-                ),
+                format!("fuera de rango: {days} (debe estar entre 1 y {max})"),
             ));
         }
     }
@@ -374,6 +390,19 @@ mod tests {
         assert!(Params::new(7, 366, 365).is_err());
         assert!(Params::new(30, 30, 30).is_ok());
         assert!(Params::new(7, 25, 100).is_ok()); // el mes no tiene que dividir al año
+    }
+
+    #[test]
+    fn el_anio_tiene_tope_propio_de_u16() {
+        assert_eq!(Params::MAX_DAYS_PER_YEAR, 65_535);
+        assert!(Params::new(7, 30, 65_535).is_ok());
+        let error = Params::new(7, 30, 65_536).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "days_per_year: fuera de rango: 65536 (debe estar entre 1 y 65535)"
+        );
+        // Semana y mes quedan acotados por el orden: no pueden superar al año.
+        assert!(Params::new(7, 65_536, 65_535).is_err());
     }
 
     #[test]

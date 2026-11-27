@@ -5,7 +5,8 @@
 
 use heliarca_sim::data::{Body, DataLoader, GameData};
 use heliarca_sim::{
-    CommandRegistry, Increment, Payload, SAVE_FORMAT_VERSION, SaveError, Scenario, Sim, Value,
+    Calendar, CalendarDate, CommandRegistry, Increment, Params, Payload, SAVE_FORMAT_VERSION,
+    SaveError, Scenario, Sim, Value,
 };
 use proptest::prelude::*;
 use serde_json::Value as Json;
@@ -22,7 +23,7 @@ fn mark(sim: &mut Sim, label: &str) {
 
 /// 365 días en pasos de distinto tamaño, con comandos `debug.mark` en varios de ellos.
 fn year_with_marks(seed: u64) -> Sim {
-    let mut sim = Sim::new(Scenario::default(), seed);
+    let mut sim = Sim::new(Scenario::default(), seed).unwrap();
     let plan = [
         Increment::D30,
         Increment::D5,
@@ -59,7 +60,7 @@ fn repo_data() -> GameData {
 
 #[test]
 fn estado_inicial_ida_y_vuelta() {
-    let sim = Sim::new(Scenario::default(), 42);
+    let sim = Sim::new(Scenario::default(), 42).unwrap();
     let loaded = roundtrip(&sim);
     assert_eq!(loaded.state_hash(), sim.state_hash());
     assert_eq!(loaded.seed(), 42);
@@ -83,7 +84,7 @@ fn un_anio_con_comandos_ida_y_vuelta() {
 
 #[test]
 fn con_comandos_pendientes_en_la_cola() {
-    let mut sim = Sim::new(Scenario::default(), 3);
+    let mut sim = Sim::new(Scenario::default(), 3).unwrap();
     mark(&mut sim, "a");
     sim.advance(Increment::D1).unwrap();
     mark(&mut sim, "b");
@@ -136,7 +137,10 @@ fn guardar_es_determinista_y_estable_tras_cargar() {
 
 #[test]
 fn el_json_lleva_format_version_primero() {
-    let json = Sim::new(Scenario::default(), 1).to_save_json(None).unwrap();
+    let json = Sim::new(Scenario::default(), 1)
+        .unwrap()
+        .to_save_json(None)
+        .unwrap();
     assert!(
         json.starts_with(&format!("{{\"format_version\":{SAVE_FORMAT_VERSION},")),
         "{json}"
@@ -150,9 +154,13 @@ fn el_json_lleva_format_version_primero() {
 fn el_formato_del_hash_no_cambio() {
     // El guardado tiene su propia versión; el hash de estado sigue siendo el de #45
     // (los golden de `state_hash` lo fijan; acá se comprueba que el guardado lo registra).
-    let value: Json =
-        serde_json::from_str(&Sim::new(Scenario::default(), 1).to_save_json(None).unwrap())
-            .unwrap();
+    let value: Json = serde_json::from_str(
+        &Sim::new(Scenario::default(), 1)
+            .unwrap()
+            .to_save_json(None)
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(value["state_hash"]["format_version"], 3);
 }
 
@@ -245,7 +253,7 @@ fn rechaza_campos_de_mas_faltantes_y_tipos_incorrectos() {
 
 #[test]
 fn version_ausente_o_desconocida_es_error_claro() {
-    let base = json_of(&Sim::new(Scenario::default(), 1));
+    let base = json_of(&Sim::new(Scenario::default(), 1).unwrap());
     let mut v = base.clone();
     v.as_object_mut().unwrap().remove("format_version");
     assert_eq!(load(&v).unwrap_err(), SaveError::MissingFormatVersion);
@@ -324,7 +332,7 @@ fn valores_invalidos_son_error() {
         }
     ));
     // Un comando pendiente desconocido, o con argumentos que no reconstruyen.
-    let mut sim = Sim::new(Scenario::default(), 1);
+    let mut sim = Sim::new(Scenario::default(), 1).unwrap();
     mark(&mut sim, "x");
     let pending = json_of(&sim);
     let mut v = pending.clone();
@@ -378,7 +386,7 @@ fn huella_de_datos() {
     );
     assert_eq!(data.fingerprint().to_string().len(), 32);
 
-    let mut sim = Sim::new(Scenario::from_game_data(&data), 9);
+    let mut sim = Sim::new(Scenario::from_game_data(&data), 9).unwrap();
     sim.advance(Increment::D5).unwrap();
     let json = sim.to_save_json(Some(&data)).unwrap();
     // Con los mismos datos carga; sin pasar datos no se comprueba nada.
@@ -438,7 +446,7 @@ proptest! {
         seed in any::<u64>(),
         ops in proptest::collection::vec((0usize..5, any::<bool>()), 0..12),
     ) {
-        let mut sim = Sim::new(Scenario::default(), seed);
+        let mut sim = Sim::new(Scenario::default(), seed).unwrap();
         for (i, (inc, with_mark)) in ops.into_iter().enumerate() {
             if with_mark {
                 mark(&mut sim, &format!("m{i}"));
@@ -452,5 +460,41 @@ proptest! {
         loaded.advance(Increment::D5).unwrap();
         prop_assert_eq!(loaded.state_hash(), sim.state_hash());
         prop_assert!(loaded.check_invariants().is_ok());
+    }
+}
+
+#[test]
+fn guardar_y_cargar_conserva_el_largo_del_anio() {
+    let params = Params::new(7, 30, 400).unwrap();
+    let start = CalendarDate::at_day_start(1, 380);
+    let scenario = Scenario::new()
+        .with_params(params)
+        .with_calendar(Calendar::with_params(start, &params).unwrap());
+    let mut sim = Sim::new(scenario, 1).unwrap();
+    sim.advance(Increment::D30).unwrap();
+    let loaded = Sim::from_save_json(&sim.to_save_json(None).unwrap(), None).unwrap();
+    assert_eq!(loaded.calendar(), sim.calendar());
+    assert_eq!(loaded.date().unwrap(), CalendarDate::at_day_start(2, 10));
+    assert_eq!(loaded.state_hash(), sim.state_hash());
+}
+
+#[test]
+fn un_guardado_con_fecha_o_anio_imposibles_es_un_campo_invalido() {
+    let json = Sim::new(Scenario::default(), 1)
+        .unwrap()
+        .to_save_json(None)
+        .unwrap();
+    let cargar = |day: u64, days_per_year: u64| {
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["calendar"]["day"] = day.into();
+        value["params"]["days_per_year"] = days_per_year.into();
+        Sim::from_save_json(&value.to_string(), None).unwrap_err()
+    };
+    for (day, days_per_year, campo) in [(363, 360, "calendar"), (1, 65_536, "params")] {
+        let error = cargar(day, days_per_year);
+        assert!(
+            matches!(&error, SaveError::InvalidField { field, .. } if *field == campo),
+            "{error:?}"
+        );
     }
 }

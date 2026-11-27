@@ -16,8 +16,8 @@
       "type": "integer"
     },
     "days_per_year": {
-      "description": "Parámetro de días `days_per_year` (entero entre 1 y 1000000).",
-      "maximum": 1000000,
+      "description": "Parámetro de días `days_per_year` (entero entre 1 y 65535).",
+      "maximum": 65535,
       "minimum": 1,
       "type": "integer"
     }

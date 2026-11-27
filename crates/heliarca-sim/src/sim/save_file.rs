@@ -351,7 +351,7 @@ mod tests {
     }
 
     fn sim_at(days: u32) -> Sim {
-        let mut sim = Sim::new(Scenario::default(), 5);
+        let mut sim = Sim::new(Scenario::default(), 5).unwrap();
         for _ in 0..days {
             sim.advance(Increment::D1).unwrap();
         }

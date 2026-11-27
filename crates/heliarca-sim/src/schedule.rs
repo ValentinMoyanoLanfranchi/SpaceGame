@@ -6,6 +6,7 @@
 //! [`DAYS_PER_YEAR`] (365) días; son los valores de [`Params::DEFAULT`] y salen de
 //! `data/params.json` ([`Scheduler::with_params`], módulo `params`). Los meses **no** se alinean con el año (12 meses = 360 días):
 //! la cadencia mensual dispara cada 30 días exactos, de modo que en 365 días corre 12 veces.
+//! El año de la cadencia anual es el mismo que el del [`Calendar`](crate::time::Calendar).
 //!
 //! # Qué significa «cruzar una frontera»
 //!
@@ -68,7 +69,7 @@ pub enum Cadence {
     Weekly,
     /// Cada mes (30 días).
     Monthly,
-    /// Cada año (365 días).
+    /// Cada año (`days_per_year` días; 365 por defecto).
     Yearly,
 }
 
@@ -474,7 +475,7 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time::{Increment, SECONDS_PER_YEAR};
+    use crate::time::{DAYS_PER_YEAR, Increment};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
@@ -841,7 +842,7 @@ mod tests {
             assert_eq!(u64::from(c[1]), t / SECONDS_PER_DAY);
             assert_eq!(u64::from(c[2]), t / SECONDS_PER_WEEK);
             assert_eq!(u64::from(c[3]), t / SECONDS_PER_MONTH);
-            assert_eq!(u64::from(c[4]), t / SECONDS_PER_YEAR);
+            assert_eq!(u64::from(c[4]), t / (SECONDS_PER_DAY * DAYS_PER_YEAR));
         }
     }
 

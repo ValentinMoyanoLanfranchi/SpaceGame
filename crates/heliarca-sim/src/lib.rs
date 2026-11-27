@@ -7,7 +7,7 @@
 //!
 //! | Paso | Llamada |
 //! |---|---|
-//! | Crear | [`Sim::new`]`(`[`Scenario`]`, semilla)` |
+//! | Crear | [`Sim::new`]`(`[`Scenario`]`, semilla)`: falla si la fecha de inicio no existe con los [`Params`] |
 //! | Actuar | [`Sim::submit_command`]: valida y encola un [`Command`]; se aplica en el siguiente avance |
 //! | Avanzar | [`Sim::advance`]`(`[`Increment`]`)`: aplica los comandos, avanza por tramos y se detiene en la primera interrupción; devuelve un [`AdvanceResult`] |
 //! | Leer eventos | [`Sim::poll_events`] (novedades) / [`Sim::events`] (todo el registro) |
@@ -27,7 +27,7 @@
 //!     fn apply(&self, _sim: &mut Sim) -> Result<(), CommandError> { Ok(()) }
 //! }
 //!
-//! let mut sim = Sim::new(Scenario::default(), 42);   // crear
+//! let mut sim = Sim::new(Scenario::default(), 42)?;   // crear
 //! sim.submit_command(Box::new(Nada))?;                // enviar un comando
 //! let result = sim.advance(Increment::D1)?;           // avanzar: lo aplica y pasa un día
 //! assert!(result.completed());                        // (no hubo interrupciones)
@@ -83,7 +83,7 @@
 //! Tampoco se puede tocar el estado interno de un `Sim` (sus campos son privados):
 //!
 //! ```compile_fail,E0616
-//! let sim = heliarca_sim::Sim::new(heliarca_sim::Scenario::default(), 1);
+//! let sim = heliarca_sim::Sim::new(heliarca_sim::Scenario::default(), 1).unwrap();
 //! let _ = sim.scheduler;
 //! ```
 //!
@@ -143,8 +143,7 @@ pub use sim::{
 pub use state_hash::StateHash;
 pub use time::{
     Calendar, CalendarDate, CalendarError, DAYS_PER_YEAR, FIRST_DAY, FIRST_YEAR, HOURS_PER_DAY,
-    Increment, MINUTES_PER_HOUR, SECONDS_PER_DAY, SECONDS_PER_HOUR, SECONDS_PER_MINUTE,
-    SECONDS_PER_YEAR, SimTime,
+    Increment, MINUTES_PER_HOUR, SECONDS_PER_DAY, SECONDS_PER_HOUR, SECONDS_PER_MINUTE, SimTime,
 };
 
 /// Versión del núcleo de simulación (la del crate).

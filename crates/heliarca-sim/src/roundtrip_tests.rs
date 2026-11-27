@@ -81,24 +81,30 @@ fn scenario() -> impl Strategy<Value = Scenario> {
         Just((7, 30, 365)),
         Just((5, 20, 200)),
         Just((7, 10, 365)),
+        Just((7, 30, 360)),
+        Just((7, 30, 400)),
         Just((3, 9, 27)),
         Just((1, 1, 1)),
     ];
-    let start = (1u64..=1_000, 1u16..=365, 0u8..24, 0u8..60, 0u8..60);
-    (params, start).prop_map(|((w, m, y), (year, day, hour, minute, second))| {
-        Scenario::new()
-            .with_params(Params::new(w, m, y).unwrap())
-            .with_calendar(
-                Calendar::new(CalendarDate {
-                    year,
-                    day,
-                    hour,
-                    minute,
-                    second,
-                })
-                .unwrap(),
-            )
-    })
+    // El día de inicio sale del largo del año de los parámetros: `Sim::new` rechaza el resto.
+    params
+        .prop_flat_map(|(w, m, y)| {
+            let day = 1u16..=u16::try_from(y).unwrap();
+            let start = (1u64..=1_000, day, 0u8..24, 0u8..60, 0u8..60);
+            (Just(Params::new(w, m, y).unwrap()), start)
+        })
+        .prop_map(|(params, (year, day, hour, minute, second))| {
+            let start = CalendarDate {
+                year,
+                day,
+                hour,
+                minute,
+                second,
+            };
+            Scenario::new()
+                .with_params(params)
+                .with_calendar(Calendar::with_params(start, &params).unwrap())
+        })
 }
 
 fn seed() -> impl Strategy<Value = u64> {
@@ -200,8 +206,8 @@ proptest! {
         seed in seed(),
         ops in prop::collection::vec(op(), 1..40),
     ) {
-        let mut reference = Sim::new(scenario, seed);
-        let mut subject = Sim::new(scenario, seed);
+        let mut reference = Sim::new(scenario, seed).unwrap();
+        let mut subject = Sim::new(scenario, seed).unwrap();
         for (i, op) in ops.iter().enumerate() {
             match op {
                 Op::Advance(inc) => {
@@ -239,7 +245,7 @@ fn rich_sim() -> Sim {
     let scenario = Scenario::new()
         .with_params(Params::new(5, 20, 200).unwrap())
         .with_calendar(Calendar::new(CalendarDate::at_day_start(9, 77)).unwrap());
-    let mut sim = Sim::new(scenario, 12345);
+    let mut sim = Sim::new(scenario, 12345).unwrap();
     for n in 0..5 {
         roll(&mut sim);
         mark(&mut sim, n);

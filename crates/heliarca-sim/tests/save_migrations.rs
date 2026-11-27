@@ -40,7 +40,7 @@ fn mark(sim: &mut Sim, label: &str) {
 
 /// El `Sim` de origen del fixture: eventos, historial, un comando pendiente y eventos sin sondear.
 fn fixture_sim() -> Sim {
-    let mut sim = Sim::new(Scenario::default(), 7);
+    let mut sim = Sim::new(Scenario::default(), 7).unwrap();
     mark(&mut sim, "uno");
     sim.advance(Increment::D5).unwrap();
     mark(&mut sim, "dos");

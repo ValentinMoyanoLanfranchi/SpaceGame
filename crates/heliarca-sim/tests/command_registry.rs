@@ -12,7 +12,7 @@ fn mark(label: &str) -> Payload {
 #[test]
 fn debug_mark_se_aplica_al_comienzo_del_siguiente_paso_y_deja_un_evento() {
     let registry = CommandRegistry::builtin();
-    let mut sim = Sim::new(Scenario::default(), 1);
+    let mut sim = Sim::new(Scenario::default(), 1).unwrap();
     sim.submit_command(registry.build("debug.mark", &mark("a")).unwrap())
         .unwrap();
     assert_eq!(sim.events().len(), 0, "enviar no aplica");
@@ -31,7 +31,7 @@ fn debug_mark_se_aplica_al_comienzo_del_siguiente_paso_y_deja_un_evento() {
 fn el_historial_reconstruido_con_el_registro_reproduce_el_hash() {
     let registry = CommandRegistry::builtin();
     let increments = [Increment::D1, Increment::H1, Increment::D5, Increment::S5];
-    let mut live = Sim::new(Scenario::default(), 7);
+    let mut live = Sim::new(Scenario::default(), 7).unwrap();
     for (step, increment) in increments.into_iter().enumerate() {
         // Dos comandos en el primer paso y uno en cada paso par: distintos pasos y órdenes.
         if step == 0 || step % 2 == 0 {
@@ -50,7 +50,7 @@ fn el_historial_reconstruido_con_el_registro_reproduce_el_hash() {
 
     // Reproducción: mismo seed, y cada registro (kind + args) reconstruido y reenviado antes de
     // su paso.
-    let mut replay = Sim::new(Scenario::default(), live.seed());
+    let mut replay = Sim::new(Scenario::default(), live.seed()).unwrap();
     for (step, increment) in increments.into_iter().enumerate() {
         for record in live
             .command_history()
@@ -66,7 +66,7 @@ fn el_historial_reconstruido_con_el_registro_reproduce_el_hash() {
     assert_eq!(replay.command_history(), live.command_history());
 
     // Y un historial distinto da otro hash.
-    let mut other = Sim::new(Scenario::default(), live.seed());
+    let mut other = Sim::new(Scenario::default(), live.seed()).unwrap();
     for increment in increments {
         other.advance(increment).unwrap();
     }

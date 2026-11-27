@@ -220,7 +220,11 @@ fn casos() -> Vec<(&'static str, String)> {
         ),
         (
             "params.json",
-            inline(r#"{"days_per_week": 1, "days_per_month": 1, "days_per_year": 1000000}"#),
+            inline(r#"{"days_per_week": 1, "days_per_month": 1, "days_per_year": 65535}"#),
+        ),
+        (
+            "params.json",
+            inline(r#"{"days_per_week": 1, "days_per_month": 1, "days_per_year": 65536}"#),
         ),
         (
             "params.json",
@@ -302,11 +306,17 @@ fn los_limites_del_esquema_de_params_salen_de_params() {
     let schema: Value =
         serde_json::from_str(&generate_all().unwrap()[&schema_path("params.json")]).unwrap();
     let max = i64::try_from(heliarca_sim::Params::MAX_DAYS).unwrap();
+    let max_year = i64::try_from(heliarca_sim::Params::MAX_DAYS_PER_YEAR).unwrap();
     let props = schema["properties"].as_object().expect("propiedades");
     assert_eq!(props.len(), 3);
     for (campo, def) in props {
         assert_eq!(def["minimum"], 1, "{campo}");
-        assert_eq!(def["maximum"], max, "{campo}");
+        let esperado = if campo == "days_per_year" {
+            max_year
+        } else {
+            max
+        };
+        assert_eq!(def["maximum"], esperado, "{campo}");
     }
     assert_eq!(schema["required"].as_array().unwrap().len(), 3);
     assert_eq!(schema["additionalProperties"], false);
