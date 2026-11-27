@@ -104,7 +104,7 @@ use super::save_migrate;
 use super::{CommandQueue, EventLog, Mark, Params, Rng, Scheduler, Sim};
 use crate::command::{CommandError, CommandId, CommandOutcome, CommandRecord, Queued};
 use crate::command_registry::{CommandBuildError, CommandRegistry, known_static_text};
-use crate::data::{Body, Entry, GameData, Orbit, OrbitKind};
+use crate::data::{Body, BodyKind, Entry, GameData, Orbit, OrbitKind, OrbitRadius};
 use crate::events::{Event, EventError, EventId, EventKind, Interrupt, Payload, Value};
 use crate::ids::EntityId;
 use crate::invariants::Violation;
@@ -116,7 +116,7 @@ use crate::time::{Calendar, CalendarDate, CalendarError, SimTime};
 pub const SAVE_FORMAT_VERSION: u32 = 1;
 
 /// Versión del algoritmo de la huella de `data/` (entra a la huella).
-const DATA_FINGERPRINT_VERSION: u32 = 1;
+const DATA_FINGERPRINT_VERSION: u32 = 2;
 /// Marca fija al comienzo del flujo canónico de la huella.
 const DATA_FINGERPRINT_MAGIC: &str = "heliarca.data.fingerprint";
 
@@ -295,13 +295,18 @@ fn write_f64(w: &mut StateWriter, value: f64) {
 fn write_orbit(w: &mut StateWriter, orbit: &Orbit) {
     let Orbit {
         kind,
-        radius_km,
+        radius,
         period_days,
     } = orbit;
     w.write_u8(match kind {
         OrbitKind::Circular => 1,
     });
-    write_f64(w, *radius_km);
+    let (unit, value) = match *radius {
+        OrbitRadius::Au(au) => (1, au),
+        OrbitRadius::Km(km) => (2, km),
+    };
+    w.write_u8(unit);
+    write_f64(w, value);
     write_f64(w, *period_days);
 }
 
@@ -312,15 +317,24 @@ fn write_body(w: &mut StateWriter, body: &Body) {
         parent,
         orbit,
         radius_km,
+        mass_kg,
         detect_difficulty,
         habitability,
         deposits,
     } = body;
     w.write_str(id);
-    w.write_str(kind);
+    w.write_u8(match kind {
+        BodyKind::Star => 1,
+        BodyKind::Planet => 2,
+        BodyKind::DwarfPlanet => 3,
+        BodyKind::Moon => 4,
+        BodyKind::Asteroid => 5,
+        BodyKind::GasGiant => 6,
+    });
     w.write_option(parent.as_deref(), StateWriter::write_str);
     w.write_option(orbit.as_ref(), write_orbit);
     write_f64(w, *radius_km);
+    write_f64(w, *mass_kg);
     w.write_u8(*detect_difficulty);
     w.write_option(*habitability, write_f64);
     w.write_len(deposits.len());
@@ -1243,7 +1257,7 @@ mod tests {
         // GOLDEN: fija el algoritmo de la huella (ver `DATA_FINGERPRINT_VERSION`).
         assert_eq!(
             GameData::default().fingerprint().to_string(),
-            "d3c9544e9f89c47605631988173cc2df"
+            "182d74bda862537a00860c66d8a3228c"
         );
     }
 }

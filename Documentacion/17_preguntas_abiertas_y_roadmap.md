@@ -75,6 +75,7 @@
 | 61 | **Bienes del MVP** | **16 bienes** (subconjunto de 18) con recetas simplificadas, mercado terrestre (compra ×1,15, venta ×0,7) y costo de lanzamiento como cuello de botella (22). |
 | 62 | **Ruta tecnológica del MVP** | **38 tecnologías** (+3 iniciales) hasta el cruce del punto de salto, ≈ 229.000 PI (≈ 25–30 años de juego); el cierre del MVP es **cruzar el punto de salto con EXP-2** (22). |
 | 63 | **Propagación de documentación** | Los docs 00–16 se actualizaron a **v0.3** con las decisiones 43–62: premisa reconciliada con el inicio terrestre (00), ritmo del mundo (01), conocimiento y Fase 1 (02, 04), costo de lanzamiento (03), Tierra única (05, 12, 14), líderes y rasgos (06, 09, 10, 20), idiomas y disposición base por especie (08), catálogo de inicios (14), UI de programas y relación visible (16), hitos de crónica (15). |
+| 64 | **Masa de los cuerpos** | Cada cuerpo lleva `mass_kg` (valores reales aproximados; ficticios para Aurelio y Brisa), porque la vista con rangos la necesita; el radio orbital se escribe en UA (`radius_au`) o en km (`radius_km`) (22). |
 
 ---
 

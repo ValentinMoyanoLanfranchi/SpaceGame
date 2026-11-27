@@ -1,5 +1,5 @@
 [
-  { "id": "body.luna", "kind": "moon", "radius_km": "grande", "detect_difficulty": 0 },
-  { "id": "body.marte", "kind": "planet", "radius_km": 3390, "detect_difficulty": 2 },
-  { "kind": "planet", "radius_km": 1, "detect_difficulty": 3 }
+  { "id": "body.luna", "kind": "moon", "parent": "body.tierra", "radius_km": "grande", "mass_kg": 1e20, "detect_difficulty": 0 },
+  { "id": "body.marte", "kind": "planet", "parent": "body.sol", "radius_km": 3390, "mass_kg": 1e20, "detect_difficulty": 2 },
+  { "kind": "planet", "radius_km": 1, "mass_kg": 1e20, "detect_difficulty": 3 }
 ]

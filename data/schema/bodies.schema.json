@@ -2,7 +2,27 @@
   "$defs": {
     "Body": {
       "additionalProperties": false,
-      "description": "Cuerpo celeste (entrada de `bodies.json`, doc 22 §11).",
+      "description": "Cuerpo celeste (entrada de `bodies.json`, doc 22 §1.1 y §11). Sólo `star` puede no tener\n`parent`.\n\nDeserializarlo comprueba la forma; los rangos y la regla del padre, [`Body::validate`] (el\ncargador la llama por cada entrada).",
+      "else": {
+        "properties": {
+          "parent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent"
+        ]
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "star"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
       "properties": {
         "deposits": {
           "description": "Yacimientos.",
@@ -14,7 +34,7 @@
         "detect_difficulty": {
           "description": "Dificultad de detección por telescopio (0–10).",
           "format": "uint8",
-          "maximum": 255,
+          "maximum": 10,
           "minimum": 0,
           "type": "integer"
         },
@@ -22,6 +42,8 @@
           "default": null,
           "description": "Habitabilidad (0–1); ausente si no aplica.",
           "format": "double",
+          "maximum": 1,
+          "minimum": 0,
           "type": [
             "number",
             "null"
@@ -32,8 +54,14 @@
           "type": "string"
         },
         "kind": {
-          "description": "Tipo de cuerpo (`moon`, `planet`...). El doc no fija la lista: es texto libre por ahora.",
-          "type": "string"
+          "$ref": "#/$defs/BodyKind",
+          "description": "Tipo de cuerpo."
+        },
+        "mass_kg": {
+          "description": "Masa, en kg (mayor que 0); la usa la vista con rangos (doc 22 §1.3).",
+          "exclusiveMinimum": 0,
+          "format": "double",
+          "type": "number"
         },
         "orbit": {
           "anyOf": [
@@ -48,14 +76,15 @@
         },
         "parent": {
           "default": null,
-          "description": "Id del cuerpo padre; ausente para la estrella.",
+          "description": "Id del cuerpo padre; sólo puede faltar en una estrella.",
           "type": [
             "string",
             "null"
           ]
         },
         "radius_km": {
-          "description": "Radio del cuerpo, en km.",
+          "description": "Radio del cuerpo, en km (mayor que 0).",
+          "exclusiveMinimum": 0,
           "format": "double",
           "type": "number"
         }
@@ -64,9 +93,45 @@
         "id",
         "kind",
         "radius_km",
+        "mass_kg",
         "detect_difficulty"
       ],
       "type": "object"
+    },
+    "BodyKind": {
+      "description": "Tipo de cuerpo (`kind` en `bodies.json`).",
+      "oneOf": [
+        {
+          "const": "star",
+          "description": "Estrella: el único tipo que puede no tener padre.",
+          "type": "string"
+        },
+        {
+          "const": "planet",
+          "description": "Planeta rocoso.",
+          "type": "string"
+        },
+        {
+          "const": "dwarf_planet",
+          "description": "Planeta enano.",
+          "type": "string"
+        },
+        {
+          "const": "moon",
+          "description": "Luna.",
+          "type": "string"
+        },
+        {
+          "const": "asteroid",
+          "description": "Asteroide.",
+          "type": "string"
+        },
+        {
+          "const": "gas_giant",
+          "description": "Gigante gaseoso.",
+          "type": "string"
+        }
+      ]
     },
     "Deposit": {
       "additionalProperties": false,
@@ -75,6 +140,8 @@
         "access": {
           "description": "Facilidad de acceso (0–1).",
           "format": "double",
+          "maximum": 1,
+          "minimum": 0,
           "type": "number"
         },
         "good": {
@@ -82,7 +149,8 @@
           "type": "string"
         },
         "reserve_mt": {
-          "description": "Reserva, en megatoneladas.",
+          "description": "Reserva, en megatoneladas (mayor que 0).",
+          "exclusiveMinimum": 0,
           "format": "double",
           "type": "number"
         }
@@ -96,26 +164,63 @@
     },
     "Orbit": {
       "additionalProperties": false,
-      "description": "Órbita de un cuerpo (`orbit` en `bodies.json`).",
+      "description": "Órbita circular de un cuerpo. El radio va en `radius_au` o en `radius_km` (exactamente uno).",
+      "oneOf": [
+        {
+          "properties": {
+            "radius_au": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "radius_au"
+          ]
+        },
+        {
+          "properties": {
+            "radius_km": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "radius_km"
+          ]
+        }
+      ],
       "properties": {
         "period_days": {
           "description": "Período, en días.",
+          "exclusiveMinimum": 0,
           "format": "double",
           "type": "number"
         },
-        "radius_km": {
-          "description": "Radio orbital, en km.",
+        "radius_au": {
+          "default": null,
+          "description": "Radio orbital, en UA (órbitas heliocéntricas).",
+          "exclusiveMinimum": 0,
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "radius_km": {
+          "default": null,
+          "description": "Radio orbital, en km (lunas).",
+          "exclusiveMinimum": 0,
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "type": {
           "$ref": "#/$defs/OrbitKind",
-          "description": "Tipo de órbita (campo `type` en el JSON)."
+          "description": "Tipo de órbita."
         }
       },
       "required": [
         "type",
-        "radius_km",
         "period_days"
       ],
       "type": "object"
